@@ -144,6 +144,34 @@ At these speeds, a player cam of a 60-minute 4K game takes about 35 minutes;
 a 90 s highlight reel under a minute. On the M4 (to do), try FFmpeg's
 VideoToolbox decoding and encoding (risks T8).
 
+## Training, synthetic games
+
+A run of the whole training path to prove it works, not a useful model.
+Three synthetic games are labelled from their known truth, one frame every
+0.25 s, and given training permission. `dataset` splits them by game:
+
+- train: the match, 40 frames;
+- valid: the crossing scene, 32 frames;
+- test: the blocker scene, 32 frames, never trained on.
+
+Then `train-detector --size nano --epochs 2 --batch-size 2 --grad-accum 1
+--device cpu`. Linux cloud container, 4 vCPU, no GPU, 2026-10-25.
+
+| Model | People: precision | Recall | AP50 |
+| --- | --- | --- | --- |
+| Standard RF-DETR nano (COCO) | — (nothing above 0.3) | 0.00 | 0.03 |
+| Fine-tuned, 2 epochs | 0.84 | 0.69 | 0.64 |
+
+- **Time:** training took 2.1 minutes, about 1 minute per epoch for 40
+  small frames. The whole command took 3.3 minutes, with scoring before and
+  after.
+- **Detection:** the fine-tuned model loads with `--weights`. On a synthetic
+  match it finds 4.0 players per frame (there are 4).
+- **Why the gain is so large:** the standard model doesn't see the blocky
+  synthetic players as people. On real footage it already does, so expect
+  much smaller gains there. Only real labelled games can say whether
+  fine-tuning helps.
+
 ## R2 onward: what to measure
 
 These feed the reward economics in [risks.md](risks.md#financial). Each one is

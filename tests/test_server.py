@@ -95,6 +95,22 @@ def test_upload_adds_the_video_and_cleans_up(site, landscape_clip):
     assert list(app.uploads.iterdir()) == []
 
 
+def test_consent_is_shown_and_changed(site, landscape_clip):
+    app, request, state, _ = site
+    upload(request, landscape_clip, "game.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    assert state()["assets"][0]["consent"] == {"testing": False, "training": False,
+                                               "public": False}
+    response, body = request("POST", "/api/consent", {"asset_id": asset_id, "training": True})
+    assert response.status == 200, body
+    assert state()["assets"][0]["consent"]["training"] is True
+    response, _ = request("POST", "/api/consent", {"asset_id": asset_id, "training": "yes"})
+    assert response.status == 400
+    response, _ = request("POST", "/api/consent", {"asset_id": asset_id})
+    assert response.status == 400
+
+
 def test_upload_of_a_non_video_fails_cleanly(site, tmp_path):
     app, request, state, _ = site
     notes = tmp_path / "notes.mp4"
@@ -332,6 +348,7 @@ def test_analytics_reviews_and_marking_goals(site, tmp_path):
     response, body = request("POST", "/api/review", {"asset_id": asset_id, "run": run["name"],
                                                      "event": dribble["id"], "verdict": "yes"})
     assert response.status == 200 and json.loads(body)["reviews"] == {dribble["id"]: "yes"}
+    assert (app.library / "calibration.json").is_file()  # every tick updates what's learnt
 
     goals = [[g[0] / width, g[1] / height, g[2] / width, g[3] / height] for g in scene.goals]
     response, body = request("POST", "/api/goals", {"asset_id": asset_id, "goals": goals})
@@ -343,6 +360,8 @@ def test_analytics_reviews_and_marking_goals(site, tmp_path):
     assert goal["confidence"] >= 0.9 and goal["details"]["by_followed_player"]
     assert data["reviews"] == {dribble["id"]: "yes"}  # reviews survive re-analysis
     assert data["review_summary"]["dribble"]["confirmed"] == 1
+    assert data["learning"]["types"]["dribble"] == {"checked": 1, "right": 1, "precision": 1.0,
+                                                    "min_confidence": None}
     assert state()["assets"][0]["runs"][0]["stats"]["goals"] == 1
 
     response, _ = request("POST", "/api/goals", {"asset_id": asset_id, "goals": [[0, 0, 2, 2]]})

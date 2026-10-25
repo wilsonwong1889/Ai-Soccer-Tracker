@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from .analytics import analyse, load_goals, load_reviews, load_run_tracks, load_trajectory
+from .calibration import load_calibration
 from .detect import Progress
 from .follow import Seed, Target, follow_player
 from .highlights import Moment, pick_moments, render_reel
@@ -61,7 +62,9 @@ def reel_moments(run_dir: Path) -> list[Moment]:
     path = Path(run_dir) / "analytics.json"
     if not path.is_file():
         raise LookupError("this run has no analytics yet: press Re-analyse")
-    return pick_moments(json.loads(path.read_text()), load_reviews(run_dir))
+    library = Path(run_dir).parents[2]  # <library>/<asset id>/runs/<run>
+    return pick_moments(json.loads(path.read_text()), load_reviews(run_dir),
+                        learnt=load_calibration(library))
 
 
 def _plan(moments: list[Moment]) -> list[list]:

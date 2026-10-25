@@ -6,7 +6,8 @@ Roboflow's public storage into ~/.roboflow/models/.
 
 Only the sizes whose weights are Apache-2.0 can be loaded (decisions.md T10).
 RF-DETR's Atto, Femto, Pico, XL and 2XL weights are under Roboflow's PML 1.0
-and are refused here.
+and are refused here. Fine-tuned weights load only from a model made by
+`train-detector` (finetune.py), whose model card says what it learnt from.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ SIZES = {
 WEIGHTS_LICENSE = "Apache-2.0"
 DEFAULT_SIZE = "small"
 DEFAULT_THRESHOLD = 0.3
+NOT_OBJECTS = {"__background__", ""}
 
 
 class DetectorUnavailable(Exception):
@@ -103,7 +105,14 @@ class RFDETRDetector:
         device: str | None = None,
         threshold: float = DEFAULT_THRESHOLD,
         shape: tuple[int, int] | None = None,
+        weights=None,
     ):
+        self.card = None
+        if weights is not None:  # a fine-tuned model: its card sets the size
+            from .finetune import load_model_card
+
+            self.card, weights = load_model_card(weights)
+            size = self.card["size"]
         check_size(size)
         try:
             import rfdetr
@@ -112,10 +121,12 @@ class RFDETRDetector:
                 "RF-DETR isn't installed. Run: uv sync --extra detect"
             ) from error
         self.size = size
-        self.name = f"rfdetr-{size}"
+        # A different name keeps runs and cached tracks of each model apart.
+        self.name = f"rfdetr-{size}" + (f"-ft{self.card['id'][:8]}" if self.card else "")
         self.threshold = threshold
         self.device = pick_device(device)
-        self.model = getattr(rfdetr, SIZES[size])(device=self.device)
+        options = {"pretrain_weights": str(weights)} if weights is not None else {}
+        self.model = getattr(rfdetr, SIZES[size])(device=self.device, **options)
 
         config = self.model.model_config
         self.block = config.patch_size * getattr(config, "num_windows", 1)
@@ -143,6 +154,8 @@ class RFDETRDetector:
             for (x1, y1, x2, y2), score, name in zip(
                 detections.xyxy, detections.confidence, names, strict=True
             )
+            # A fine-tuned model can report its "no object" slot; that's background.
+            if name not in NOT_OBJECTS
         ]
 
     def describe(self) -> dict:
@@ -153,7 +166,9 @@ class RFDETRDetector:
             "name": self.name,
             "family": "RF-DETR",
             "size": self.size,
-            "weights": "COCO-pretrained (Roboflow)",
+            "weights": (f"fine-tuned {self.card['name']} ({self.card['id']}) on "
+                        f"{self.card['dataset']['name']}, from COCO-pretrained (Roboflow)"
+                        if self.card else "COCO-pretrained (Roboflow)"),
             "weights_license": WEIGHTS_LICENSE,
             "input_shape": [width, height],
             "threshold": self.threshold,

@@ -164,3 +164,34 @@ def test_ingest_move_mode_leaves_duplicates_and_failures_in_place(
 def test_link_and_move_together_are_refused(tmp_path, landscape_clip):
     with pytest.raises(ValueError):
         ingest(landscape_clip, tmp_path, link=True, move=True)
+
+
+def test_consent_starts_empty_and_is_recorded_per_use(tmp_path, landscape_clip):
+    from soccer_recorder.library import set_consent
+
+    asset, _ = ingest(landscape_clip, tmp_path / "lib")
+    assert not any(asset.allows(use) for use in ("testing", "training", "public"))
+    set_consent(asset, testing=True, note="Forms from all families, folder Team 2026")
+    set_consent(asset, training=True)
+    again = load_asset(asset.directory)
+    assert again.allows("testing") and again.allows("training") and not again.allows("public")
+    assert again.consent["note"] == "Forms from all families, folder Team 2026"  # kept
+    set_consent(again, training=False)
+    assert not load_asset(asset.directory).allows("training")
+    with pytest.raises(ValueError):
+        set_consent(again, marketing=True)
+    with pytest.raises(ValueError):
+        again.allows("marketing")
+
+
+def test_run_folders_started_in_the_same_second_never_collide(tmp_path):
+    from datetime import datetime
+
+    from soccer_recorder.library import new_run_dir
+
+    when = datetime(2026, 10, 25, 12, 0, 0)
+    first = new_run_dir(tmp_path / "runs", "follow-n10", when)
+    second = new_run_dir(tmp_path / "runs", "follow-n10", when)
+    assert first.name == "follow-n10-20261025-120000"
+    assert second.name == "follow-n10-20261025-120001"
+    assert first.is_dir() and second.is_dir()

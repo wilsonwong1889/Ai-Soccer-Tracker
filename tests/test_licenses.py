@@ -24,6 +24,9 @@ REVIEWED = {
     "scipy",
     # PSF-style, but bundles FreeType under "FTL OR GPL-2.0": we take the FTL.
     "matplotlib",
+    # Apache-2.0: the LICENSE file in the wheel says so, but the metadata
+    # leaves the licence out. Both come with RF-DETR's training extra.
+    "faster-coco-eval", "torch-hungarian",
     # This project itself (proprietary, no license metadata).
     "soccer-recorder",
 }

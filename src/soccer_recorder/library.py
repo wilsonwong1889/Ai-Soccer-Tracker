@@ -7,9 +7,19 @@ points at the same asset, never a new one.
 
     data/library/
       3f9a1c0e5b7d2a64/
-        manifest.json   what the file is (VideoInfo) and where it came from
+        manifest.json   what the file is (VideoInfo), where it came from, and
+                        what the families agreed it may be used for
         source.mov      copy of the original, or a symlink to it with --link
         proxy.mp4       optional small constant-rate copy for detection
+
+Permission ("consent") is recorded per video, for each use separately,
+because every family whose child can be identified has to agree:
+
+- testing:  measuring how accurate the software is (labelled frames, reviews);
+- training: teaching our own models (fine-tuning the detector, re-ID);
+- public:   showing it outside the family, e.g. in the campaign video.
+
+A new video has none of them: it's only for watching on this computer.
 """
 
 from __future__ import annotations
@@ -21,7 +31,7 @@ import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .frames import DEFAULT_MAX_SIDE
@@ -34,6 +44,7 @@ ASSET_ID_LENGTH = 16
 MANIFEST = "manifest.json"
 PROXY = "proxy.mp4"
 HASH_CHUNK = 8 * 1024 * 1024
+USES = ("testing", "training", "public")
 
 
 class IngestError(Exception):
@@ -51,6 +62,13 @@ class Asset:
     source_mode: str
     video: VideoInfo
     proxy: dict | None = None
+    consent: dict | None = None  # {"testing": bool, "training": bool, "public": bool, ...}
+
+    def allows(self, use: str) -> bool:
+        """Whether the families agreed to this use of the video."""
+        if use not in USES:
+            raise ValueError(f"use must be one of {', '.join(USES)}")
+        return bool((self.consent or {}).get(use))
 
     @property
     def source_path(self) -> Path:
@@ -70,6 +88,7 @@ class Asset:
             "source": {"path": self.source, "mode": self.source_mode},
             "video": self.video.to_dict(),
             "proxy": self.proxy,
+            "consent": self.consent,
         }
 
 
@@ -102,7 +121,50 @@ def load_asset(directory: Path) -> Asset:
         source_mode=data["source"]["mode"],
         video=VideoInfo.from_dict(data["video"]),
         proxy=data.get("proxy"),
+        consent=data.get("consent"),
     )
+
+
+def set_consent(asset: Asset, *, note: str | None = None, **uses: bool) -> dict:
+    """Record what the families agreed this video may be used for.
+
+    Only the uses passed change. The note says where the signed permission is
+    kept (e.g. "forms from all 12 families, folder Team 2026"); never write
+    children's names in it.
+    """
+    unknown = set(uses) - set(USES)
+    if unknown:
+        raise ValueError(f"unknown use {', '.join(sorted(unknown))}; uses are {', '.join(USES)}")
+    consent = {use: bool((asset.consent or {}).get(use)) for use in USES}
+    consent.update({use: bool(value) for use, value in uses.items()})
+    if note is not None:
+        consent["note"] = note.strip()[:300]
+    elif asset.consent and asset.consent.get("note"):
+        consent["note"] = asset.consent["note"]
+    consent["updated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+    asset.consent = consent
+    _write_manifest(asset)
+    return consent
+
+
+def new_run_dir(runs: Path, prefix: str, now: datetime | None = None) -> Path:
+    """A new, empty run folder named <prefix>-<YYYYMMDD-HHMMSS>, created at once.
+
+    Creating it reserves the name, so two runs started in the same second
+    never share (and overwrite) a folder: the later one takes the next free
+    second.
+    """
+    runs = Path(runs)
+    runs.mkdir(parents=True, exist_ok=True)
+    when = now or datetime.now()
+    for _ in range(3600):
+        folder = runs / f"{prefix}-{when:%Y%m%d-%H%M%S}"
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            when += timedelta(seconds=1)
+    raise RuntimeError(f"no free run folder name for {prefix} in {runs}")
 
 
 def list_assets(library: Path | None = None) -> list[Asset]:

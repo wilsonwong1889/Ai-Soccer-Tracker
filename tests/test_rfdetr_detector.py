@@ -57,6 +57,18 @@ def test_label_names_falls_back_to_coco_ids_not_list_positions():
     ]
 
 
+def test_background_slot_of_a_fine_tuned_model_is_dropped():
+    detector = object.__new__(RFDETRDetector)  # no model download: a stand-in predict
+    detector.threshold, detector.shape = 0.3, None
+    detections = SimpleNamespace(
+        xyxy=np.array([[0, 0, 10, 20], [5, 5, 9, 9], [1, 1, 2, 2]], float),
+        confidence=np.array([0.9, 0.8, 0.7]), class_id=np.array([0, 1, 2]),
+        data={"class_name": np.array(["person", "sports ball", "__background__"])})
+    detector.model = SimpleNamespace(predict=lambda *a, **k: detections)
+    boxes = detector.detect(np.zeros((20, 20, 3), np.uint8))
+    assert [b.label for b in boxes] == ["person", "sports ball"]
+
+
 @pytest.mark.skipif(not has_rfdetr, reason="detect extra not installed")
 def test_rfdetr_coco_ids_match_what_we_rely_on():
     from rfdetr.assets.coco_classes import COCO_CLASSES

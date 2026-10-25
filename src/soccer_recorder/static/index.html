@@ -152,6 +152,7 @@
             <option value="sound">Sound</option><option value="all">Everything</option>
           </select></div>
         <div id="an-reviewed" class="small muted"></div>
+        <div id="an-learnt" class="small muted"></div>
         <div id="an-events" class="events"></div>
       </div>
     </div>
@@ -330,6 +331,15 @@ document.addEventListener("click", (e) => {
   else if (action === "cancel") post(`/api/jobs/${job}/cancel`);
 });
 document.addEventListener("change", (e) => {
+  const box = e.target.closest("[data-consent]");
+  if (box) {
+    if (box.checked && !confirm("Only tick this if every family whose child can be seen in this video agreed, " +
+                                "and you've kept their written permission. Continue?")) {
+      box.checked = false; return;
+    }
+    post("/api/consent", { asset_id: box.dataset.asset, [box.dataset.consent]: box.checked });
+    return;
+  }
   const el = e.target.closest("[data-choice]");
   if (!el) return;
   const c = (choices[el.dataset.asset] ||= {});
@@ -656,6 +666,17 @@ function renderEvents() {
   $("an-reviewed").textContent = reviewed
     ? `You've checked ${reviewed} of ${an.events.length} moments: ${right} right, ${reviewed - right} wrong.`
     : "Tick ✓ or ✗ to tell us whether each moment really happened.";
+  renderLearnt();
+}
+function renderLearnt() {
+  // What ticks across all games taught the highlight reel.
+  const types = Object.entries((an.learning || {}).types || {});
+  const learnt = types.filter(([, s]) => s.min_confidence != null);
+  $("an-learnt").textContent = learnt.length
+    ? "Learnt from your checks: " + learnt.map(([k, s]) => `${(TYPES[k] || [k])[0].toLowerCase()} right ` +
+        `${Math.round(100 * s.precision)}% → reel ${s.min_confidence > 1 ? "only when ticked"
+        : `takes them from ${Math.round(100 * s.min_confidence)}% sure`}`).join("; ") + "."
+    : types.length ? "Check 10 moments of a kind and the highlight reel learns how much to trust it." : "";
 }
 $("an-filter").addEventListener("change", renderEvents);
 $("an-events").addEventListener("click", async (e) => {
@@ -682,8 +703,8 @@ $("an-events").addEventListener("click", async (e) => {
                                           `&run=${encodeURIComponent(run)}`, { cache: "no-store" });
     if (!res.ok || !an || an.run !== run) return;
     const fresh = await res.json();
-    an.reel = fresh.reel; an.exports = fresh.exports;
-    renderExports();
+    an.reel = fresh.reel; an.exports = fresh.exports; an.learning = fresh.learning;
+    renderExports(); renderLearnt();
   }, 400);
 });
 let reelTimer = null;
@@ -810,6 +831,11 @@ function lengthOptions(selected) {
     `<option value="${v ?? "all"}" ${v === selected ? "selected" : ""}>${label}</option>`).join("");
 }
 
+const USES = [
+  ["testing", "measuring accuracy", "Labelled frames and your ticks from this video may be used to measure how well the software works"],
+  ["training", "training our AI", "Frames from this video may be used to teach our own models"],
+  ["public", "showing publicly", "This video may be shown outside the families, e.g. in the campaign video"],
+];
 function renderAssets(assets) {
   if (!assets.length) {
     $("assets").innerHTML = `<div class="card empty muted">No videos yet. Drop one above.</div>`;
@@ -862,6 +888,11 @@ function renderAssets(assets) {
         <button data-action="watch" data-url="${esc(a.source_url)}" data-title="${esc(a.filename)}">Play original</button>
       </div>
       ${warnings ? `<div class="stack small" style="margin-top:8px">${warnings}</div>` : ""}
+      <div class="row small consent" style="margin-top:8px">
+        <span class="muted" title="Every family whose child can be seen must agree">Families agreed to:</span>
+        ${USES.map(([use, label, tip]) => `<label title="${esc(tip)}"><input type="checkbox" data-consent="${use}"
+          data-asset="${esc(a.asset_id)}" ${a.consent && a.consent[use] ? "checked" : ""}> ${esc(label)}</label>`).join("")}
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="primary" data-action="follow" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
           ${busy.has(a.asset_id) ? "Working…" : "Follow a player"}</button>

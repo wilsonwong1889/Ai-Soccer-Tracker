@@ -57,6 +57,10 @@ Rules that keep the numbers honest:
 
 CVAT's "AI tools" can propose boxes to speed this up. Check every one.
 
+**If the frames will also be used for training** ([training.md](training.md)),
+box spectators too, as `spectator`. For training, every person counts as a
+person, and an unboxed one teaches the model to ignore people there.
+
 Create a **task** in the project, upload the JPEGs from step 1, label, then
 **Export task dataset → COCO 1.0**. The zip holds
 `annotations/instances_default.json`.

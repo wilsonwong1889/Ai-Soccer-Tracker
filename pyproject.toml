@@ -17,6 +17,11 @@ detect = [
     "trackers>=2.6,<3",
     "pillow>=10.1",
 ]
+# Fine-tuning the detector on your own labelled footage (docs/training.md).
+train = [
+    "soccer-recorder[detect]",
+    "rfdetr[train]>=1.11,<2",
+]
 
 [dependency-groups]
 dev = [

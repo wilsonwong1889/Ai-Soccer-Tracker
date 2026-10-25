@@ -44,6 +44,11 @@ metrics JSON.
 - [x] Verified end to end on a real image with people (cloud CPU); 169 tests
 - [ ] **On the M4:** `benchmark` on a real game clip; pick the default size and shape
 - [ ] **Labelled set** (≥ 200 frames, ≥ 2 games) and `evaluate` results against the targets below
+- [x] Fine-tuning ([training.md](training.md)): permission per video, `dataset` (training
+      permission only, split by game, datasheet), `train-detector` (scores the standard and
+      the new model on held-out games), `--weights` everywhere. Proven end to end on
+      synthetic games ([benchmarks.md](benchmarks.md#training-synthetic-games))
+- [ ] Fine-tune on real labelled games and keep the model only if it beats the standard one
 
 - Start with RF-DETR (Apache-2.0 sizes only) and benchmark YOLOX against it
   ([prior-art.md](prior-art.md#proposed-stack-for-r2r5)). No Ultralytics models
@@ -163,6 +168,9 @@ games is still to be measured.
 - [x] Highlight reel: ✓ moments always in, ✗ never, the rest when ≥ 60% sure;
       a lead-in per event type and a caption; ≤ 90 s keeping the best; marked
       *out of date* when reviews change
+- [x] Learning from reviews: precision per kind of moment across all games (`reviews`,
+      and on the Analytics page); after 10 checks of a kind, the reel takes it only from
+      the confidence where ≥ 80% were right
 - [ ] Precision per event type from parents' reviews on real games
 
 - Candidates come with a confidence and a reason; the user accepts or rejects each

@@ -80,6 +80,12 @@ gather, not claims to make:
   whose child is identifiable, stored privately, deleted on request
 - Whether customer footage is ever used to improve models. Proposed: never,
   without separate opt-in consent
+- How training consent is enforced (built): permission is recorded per video
+  and per use; training sets are built only from videos with training
+  permission, each with a datasheet listing every video used; each model's
+  card names the datasheet it learnt from ([training.md](training.md))
+- The highlight reel's "learning" is counting the parent's own ticks, on
+  their computer: no model is trained on it
 - Where footage is stored, who can access it, and when it is deleted
 
 ## Rewards: what's drafted and what's unresolved

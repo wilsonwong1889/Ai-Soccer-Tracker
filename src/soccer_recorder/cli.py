@@ -4,6 +4,7 @@ detect | benchmark | sample-frames | evaluate | track | follow | analyze | serve
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.metadata
 import importlib.util
 import json
@@ -22,7 +23,16 @@ from . import __version__
 from .detect import Detector, Progress, run_detection
 from .evaluate import LabelError, detect_images, load_coco, score
 from .frames import DEFAULT_MAX_SIDE, sample_frames
-from .library import Asset, IngestError, default_library, ingest, list_assets
+from .library import (
+    USES,
+    Asset,
+    IngestError,
+    default_library,
+    ingest,
+    list_assets,
+    new_run_dir,
+    set_consent,
+)
 from .media import MediaError, VideoInfo, probe
 from .rfdetr_detector import (
     DEFAULT_SIZE,
@@ -104,6 +114,29 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print("\n".join(_describe(asset.video)))
     if asset.proxy:
         print(f"  proxy     {asset.proxy['width']}x{asset.proxy['height']}  {asset.proxy_path}")
+    return 0
+
+
+USE_TEXT = {
+    "testing": "measuring accuracy (labelled frames, reviews)",
+    "training": "training our own models",
+    "public": "showing it publicly (e.g. the campaign video)",
+}
+
+
+def cmd_consent(args: argparse.Namespace) -> int:
+    _, asset = _library_asset(args.target, args.library, "consent")
+    changes = {use: getattr(args, use) for use in USES if getattr(args, use) is not None}
+    if changes or args.note is not None:
+        set_consent(asset, note=args.note, **changes)
+    print(f"{asset.asset_id}  {asset.original_filename}")
+    for use in USES:
+        print(f"  {'yes' if asset.allows(use) else 'no ':<4} {USE_TEXT[use]}")
+    consent = asset.consent or {}
+    if consent.get("note"):
+        print(f"  note  {consent['note']}")
+    if consent.get("updated_at"):
+        print(f"  set   {consent['updated_at']}")
     return 0
 
 
@@ -217,9 +250,16 @@ def make_detector(
     device: str | None = None,
     threshold: float = DEFAULT_THRESHOLD,
     shape: tuple[int, int] | None = None,
+    weights: Path | None = None,
 ) -> Detector:
     """The detector the commands use. Tests replace this with a stand-in."""
-    return RFDETRDetector(size, device=device, threshold=threshold, shape=shape)
+    return RFDETRDetector(size, device=device, threshold=threshold, shape=shape, weights=weights)
+
+
+def _weights(args: argparse.Namespace) -> dict:
+    """`weights=` for make_detector, only when a fine-tuned model was asked for."""
+    weights = getattr(args, "weights", None)
+    return {"weights": weights} if weights else {}
 
 
 def _resolve(target: str, library: Path) -> tuple[Path, Asset | None]:
@@ -243,8 +283,19 @@ def _runs_base(video: Path, asset: Asset | None) -> Path:
 
 
 def _run_dir(video: Path, asset: Asset | None, name: str) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _runs_base(video, asset) / f"{name}-{stamp}"
+    """A new run folder, created now (see library.new_run_dir)."""
+    return new_run_dir(_runs_base(video, asset), name)
+
+
+@contextlib.contextmanager
+def _removed_on_error(folder: Path, made: bool):
+    """Remove a run folder this command made if the command fails, so no half run is left."""
+    try:
+        yield
+    except BaseException:
+        if made:
+            shutil.rmtree(folder, ignore_errors=True)
+        raise
 
 
 def _progress_printer():
@@ -292,15 +343,17 @@ def _print_metrics(metrics: dict, out: Path) -> None:
 def cmd_detect(args: argparse.Namespace) -> int:
     video, asset = _resolve(args.target, args.library or default_library())
     detector = make_detector(
-        args.size, device=args.device, threshold=args.threshold, shape=parse_shape(args.shape)
+        args.size, device=args.device, threshold=args.threshold, shape=parse_shape(args.shape),
+        **_weights(args),
     )
     out = args.out or _run_dir(video, asset, f"detect-{detector.name}")
     print(f"Detecting with {detector.name} on {detector.describe()['device']}: {video.name}")
-    metrics = run_detection(
-        video, detector, out,
-        max_side=args.max_side, fps=args.fps, start_s=args.start, duration_s=args.duration,
-        write_video=not args.no_video, on_progress=_progress_printer(),
-    )
+    with _removed_on_error(out, made=not args.out):
+        metrics = run_detection(
+            video, detector, out,
+            max_side=args.max_side, fps=args.fps, start_s=args.start, duration_s=args.duration,
+            write_video=not args.no_video, on_progress=_progress_printer(),
+        )
     print(file=sys.stderr)
     _print_metrics(metrics, out)
     return 0
@@ -367,7 +420,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     if not labels:
         raise LabelError(f"{args.labels}: no images")
     detector = make_detector(args.size, device=args.device, threshold=args.min_score,
-                             shape=parse_shape(args.shape))
+                             shape=parse_shape(args.shape), **_weights(args))
 
     def on_image(n: int, total: int) -> None:
         print(f"\r  {n}/{total} images", end="", file=sys.stderr, flush=True)
@@ -416,7 +469,8 @@ def cmd_track(args: argparse.Namespace) -> int:
     from .overlay import render_tracks
 
     video, asset = _resolve(args.target, args.library or default_library())
-    detector = make_detector(args.size, device=args.device, threshold=args.threshold)
+    detector = make_detector(args.size, device=args.device, threshold=args.threshold,
+                             **_weights(args))
     print(f"Tracking players with {detector.name} on {detector.describe()['device']}: "
           f"{video.name}")
     tracks, folder, cached = load_or_track(
@@ -441,16 +495,18 @@ def cmd_follow(args: argparse.Namespace) -> int:
     info = probe(video)
     x, y = _parse_point(args.point, info)
     target = Target(number=args.number, name=args.name or "")
-    detector = make_detector(args.size, device=args.device, threshold=args.threshold)
+    detector = make_detector(args.size, device=args.device, threshold=args.threshold,
+                             **_weights(args))
     print(f"Following {target.label} from {args.at:g} s in {video.name}")
     tracks, folder, cached = load_or_track(
         video, _runs_base(video, asset), detector, fps=args.fps, start_s=args.start,
         duration_s=args.duration, max_side=args.max_side, on_progress=_progress_printer())
     print(file=sys.stderr)
     out = args.out or _run_dir(video, asset, f"follow-n{args.number}")
-    metrics = follow_player(video, tracks, Seed(args.at, x, y), target, out,
-                            max_side=args.max_side, on_progress=_progress_printer(),
-                            tracks_run=folder.name)
+    with _removed_on_error(out, made=not args.out):
+        metrics = follow_player(video, tracks, Seed(args.at, x, y), target, out,
+                                max_side=args.max_side, on_progress=_progress_printer(),
+                                tracks_run=folder.name)
     print(file=sys.stderr)
     from .analytics import analyse, load_goals
 
@@ -556,8 +612,9 @@ def cmd_fix(args: argparse.Namespace) -> int:
     out = _run_dir(video, asset, f"follow-n{saved['target']['number']}")
     print(f"Following #{saved['target']['number']} again from {run.name}, "
           f"with a tap at {args.at:g} s")
-    metrics = correct_run(video, run, Seed(args.at, x, y), out, goals_dir=asset.directory,
-                          render=not args.no_video, on_progress=_progress_printer())
+    with _removed_on_error(out, made=True):
+        metrics = correct_run(video, run, Seed(args.at, x, y), out, goals_dir=asset.directory,
+                              render=not args.no_video, on_progress=_progress_printer())
     print(file=sys.stderr)
     coverage = metrics["coverage"]
     print(f"  taps        {len(metrics['taps'])} (the first, plus {len(metrics['taps']) - 1} "
@@ -569,11 +626,93 @@ def cmd_fix(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dataset(args: argparse.Namespace) -> int:
+    from .dataset import build_dataset
+
+    labels, images = args.labels or [], args.images or []
+    if not labels or len(labels) != len(images):
+        raise ValueError("give --labels and --images in pairs: each labels file with the "
+                         "folder of the frames it labels")
+    out = args.out or Path("data/datasets") / args.name
+    sheet = build_dataset(list(zip(labels, images, strict=True)), out,
+                          library=args.library or default_library(), seed=args.seed)
+    print(f"Training set {sheet['name']}: {len(sheet['videos'])} video(s), split by "
+          f"{sheet['split_by']}")
+    for split, counts in sheet["splits"].items():
+        print(f"  {split:<6} {counts['images']:>5} frames  {counts['person']:>6} people  "
+              f"{counts['sports ball']:>5} balls")
+    refused = sheet["refused"]
+    no_permission = sum(r["frames"] for r in refused["no training permission"])
+    if no_permission or refused["not from a library video"] or refused["image file missing"]:
+        print(f"  left out {no_permission} frames without training permission, "
+              f"{refused['not from a library video']} not from a library video, "
+              f"{refused['image file missing']} with the image missing")
+    print(f"  saved  {out} (datasheet.md says where every frame came from)")
+    return 0
+
+
+def cmd_train_detector(args: argparse.Namespace) -> int:
+    from .finetune import train_detector
+
+    out = args.out or Path("data/models") / args.name
+    card = train_detector(
+        args.dataset, out, size=args.size, epochs=args.epochs, batch_size=args.batch_size,
+        grad_accum=args.grad_accum, lr=args.lr, device=args.device,
+        resolution=args.resolution, workers=args.workers, max_side=args.max_side,
+        on_stage=lambda message: print(message, file=sys.stderr),
+    )
+    test = card["test"]
+    print(f"Model {card['name']} (RF-DETR {card['size']}, {card['training']['epochs']} epochs "
+          f"in {card['training']['wall_s'] / 60:.1f} min on {card['training']['device']})")
+    print(f"  test frames {test['frames']} (from {card['dataset']['split_by']}s it didn't "
+          "train on)")
+    for label in ("person", "sports ball"):
+        before, after = test["before"][label], test["after"][label]
+
+        def show(r):
+            return " ".join(f"{k} {'-' if r[k] is None else f'{r[k]:.3f}'}"
+                            for k in ("precision", "recall", "ap50"))
+
+        print(f"  {label:<12} before: {show(before)}")
+        print(f"  {'':<12} after:  {show(after)}")
+    if test["better"]:
+        print(f"  Better on the test frames. Use it with: --weights {out}")
+    else:
+        print("  Not better than the standard model: keep using that. Label more frames, "
+              "or train longer.")
+    return 0
+
+
+def cmd_reviews(args: argparse.Namespace) -> int:
+    from .calibration import MIN_REVIEWED, ONLY_TICKED, update_calibration
+
+    library = args.library or default_library()
+    calibration = update_calibration(library)
+    stats = calibration["stats"]
+    if not stats["checked"]:
+        print("No moments checked yet. Tick ✓ or cross ✗ them on the Analytics page.")
+        return 0
+    print(f"Your checks: {stats['checked']} moments in {stats['games']} game(s)")
+    print(f"  {'moment':<16} {'checked':>7} {'right':>6} {'right %':>8}  highlight reel takes")
+    for kind, s in stats["types"].items():
+        threshold = s["min_confidence"]
+        if threshold is None:
+            uses = f"≥ 60% sure (default; learns after {MIN_REVIEWED - s['checked']} more)"
+        elif threshold >= ONLY_TICKED:
+            uses = "only the ones you tick (too often wrong)"
+        else:
+            uses = f"≥ {100 * threshold:.0f}% sure (learnt)"
+        print(f"  {kind:<16} {s['checked']:>7} {s['right']:>6} {100 * s['precision']:>7.0f}%  "
+              f"{uses}")
+    print(f"  saved  {Path(library) / 'calibration.json'}")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import App, make_server
 
     library = args.library or default_library()
-    app = App(library, detector_factory=lambda size: make_detector(size))
+    app = App(library, detector_factory=lambda size: make_detector(size, **_weights(args)))
     try:
         server = make_server(app, args.port)
     except OSError as error:
@@ -602,6 +741,9 @@ def _add_detector_args(parser: argparse.ArgumentParser, *, sizes: bool = False) 
                                  "the Apache-2.0 sizes are offered")
     parser.add_argument("--device", default="auto",
                         help="auto (Apple GPU, then CUDA, then CPU), mps, cuda or cpu")
+    if not sizes:
+        parser.add_argument("--weights", type=Path,
+                            help="a fine-tuned model folder from train-detector (sets the size)")
     parser.add_argument("--max-side", type=int, default=DEFAULT_MAX_SIDE,
                         help=f"downscale frames so the long side is at most this "
                              f"(default {DEFAULT_MAX_SIDE})")
@@ -657,6 +799,19 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_argument("--library", type=Path, help=library_help)
     list_cmd.add_argument("--json", action="store_true", help="print JSON")
     list_cmd.set_defaults(func=cmd_list)
+
+    consent = sub.add_parser(
+        "consent", help="record what the families agreed a video may be used for",
+        description="Every family whose child can be identified must agree. A new video "
+                    "has no permissions: it's only for watching on this computer.")
+    consent.add_argument("target", help="a library asset id (or its start)")
+    for use in USES:
+        consent.add_argument(f"--{use}", action=argparse.BooleanOptionalAction, default=None,
+                             help=USE_TEXT[use])
+    consent.add_argument("--note", help="where the signed permission is kept (no children's "
+                                        "names)")
+    consent.add_argument("--library", type=Path, help=library_help)
+    consent.set_defaults(func=cmd_consent)
 
     sample = sub.add_parser("make-sample", help="write a synthetic test clip (no real people)")
     sample.add_argument("out", type=Path)
@@ -783,10 +938,48 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--library", type=Path, help=library_help)
     fix.set_defaults(func=cmd_fix)
 
+    dataset = sub.add_parser(
+        "dataset", help="build a training set from labelled frames (training permission only)")
+    dataset.add_argument("--name", required=True, help="a new name, e.g. indoor-2026-11")
+    dataset.add_argument("--labels", type=Path, action="append",
+                         help="a COCO labels file exported from CVAT (repeat for more)")
+    dataset.add_argument("--images", type=Path, action="append",
+                         help="the folder of the frames those labels are for (same order)")
+    dataset.add_argument("--seed", type=int, default=0, help="for choosing test games")
+    dataset.add_argument("--library", type=Path, help=library_help)
+    dataset.add_argument("--out", type=Path, help="default: data/datasets/<name>")
+    dataset.set_defaults(func=cmd_dataset)
+
+    train = sub.add_parser("train-detector",
+                           help="fine-tune the detector on a training set, then score it")
+    train.add_argument("dataset", type=Path, help="a folder made by `soccer-recorder dataset`")
+    train.add_argument("--name", required=True, help="a new name for the model")
+    train.add_argument("--size", choices=list(SIZES), default=DEFAULT_SIZE)
+    train.add_argument("--epochs", type=int, default=20)
+    train.add_argument("--batch-size", type=int, default=4)
+    train.add_argument("--grad-accum", type=int, default=4,
+                       help="batches per update: batch size x this is the effective batch")
+    train.add_argument("--lr", type=float, default=1e-4)
+    train.add_argument("--resolution", type=int, help="training input size (default: the "
+                                                      "size's own)")
+    train.add_argument("--workers", type=int, default=2, help="data loading processes")
+    train.add_argument("--device", default="auto", help="auto, mps, cuda or cpu")
+    train.add_argument("--max-side", type=int, default=DEFAULT_MAX_SIDE,
+                       help="frame size when scoring, as for videos")
+    train.add_argument("--out", type=Path, help="default: data/models/<name>")
+    train.set_defaults(func=cmd_train_detector)
+
+    reviews = sub.add_parser("reviews", help="how often each kind of moment was right, "
+                                             "from your ticks; updates the reel's settings")
+    reviews.add_argument("--library", type=Path, help=library_help)
+    reviews.set_defaults(func=cmd_reviews)
+
     serve = sub.add_parser("serve", help="open the local website: drop videos, run detection")
     serve.add_argument("--port", type=int, default=8765, help="default 8765")
     serve.add_argument("--library", type=Path, help=library_help)
     serve.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
+    serve.add_argument("--weights", type=Path,
+                       help="detect with a fine-tuned model from train-detector")
     serve.set_defaults(func=cmd_serve)
     return parser
 

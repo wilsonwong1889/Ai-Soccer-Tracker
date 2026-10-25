@@ -4,7 +4,9 @@ Moments come from the analytics events:
 
 - events the parent ticked ✓ always go in;
 - events they crossed ✗ never do;
-- unreviewed events go in if they're confident enough.
+- unreviewed events go in if they're confident enough. How confident is
+  learnt per kind of moment from the ticks and crosses (calibration.py),
+  with 60% until enough have been checked.
 
 Each moment is a short clip around the event, with a little lead-in so
 the play makes sense. Overlapping clips are merged. If the total is too
@@ -53,8 +55,13 @@ def _clock(seconds: float) -> str:
 
 def pick_moments(analytics: dict, reviews: dict[str, str], *,
                  max_total_s: float = DEFAULT_MAX_TOTAL_S,
-                 min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> list[Moment]:
-    """Which stretches of the game go in the reel, in game order."""
+                 min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+                 learnt: dict[str, float] | None = None) -> list[Moment]:
+    """Which stretches of the game go in the reel, in game order.
+
+    `learnt` overrides `min_confidence` for the kinds of moment it names.
+    """
+    learnt = learnt or {}
     start_s, end_s = analytics["window"]["start_s"], analytics["window"]["end_s"]
     candidates = []
     for event in analytics["events"]:
@@ -62,7 +69,7 @@ def pick_moments(analytics: dict, reviews: dict[str, str], *,
         verdict = reviews.get(event["id"])
         if kind not in MOMENTS or verdict == "no":
             continue
-        if verdict != "yes" and event["confidence"] < min_confidence:
+        if verdict != "yes" and event["confidence"] < learnt.get(kind, min_confidence):
             continue
         before, after, weight, caption = MOMENTS[kind]
         end = event["end_t"] if event["end_t"] is not None else event["t"]

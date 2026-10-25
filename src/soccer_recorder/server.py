@@ -39,10 +39,11 @@ from .analytics import (
     save_goals,
     save_review,
 )
+from .calibration import load_calibration, review_stats, update_calibration
 from .detect import Detector, Progress, run_detection
 from .exports import correct_run, export_name, list_exports, make_export, reel_moments
 from .follow import Seed, Target, follow_player
-from .library import Asset, ingest, list_assets, load_asset
+from .library import USES, Asset, ingest, list_assets, load_asset, new_run_dir, set_consent
 from .media import fit_within, require_tool
 from .tracking import load_or_track
 
@@ -291,6 +292,7 @@ class App:
                 "device": video.device,
                 "warnings": video.warnings,
                 "source_url": f"/files/{asset.asset_id}/{asset.source}",
+                "consent": {use: asset.allows(use) for use in USES},
                 "runs": runs,
             })
         return result
@@ -344,8 +346,7 @@ class App:
         def work(job: Job) -> dict:
             job.message = f"Loading RF-DETR {size}"
             detector = self._detector(size)
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            out = asset.directory / "runs" / f"detect-{detector.name}-{stamp}"
+            out = new_run_dir(asset.directory / "runs", f"detect-{detector.name}")
 
             def on_progress(progress: Progress) -> None:
                 if job.cancel.is_set():
@@ -371,6 +372,14 @@ class App:
 
         return self.jobs.submit("detect", f"Detect players in {asset.original_filename} "
                                 f"({label}, {size})", work, asset_id=asset_id)
+
+    def set_consent(self, asset_id: str, changes: dict) -> dict:
+        """Record what the families agreed a video may be used for."""
+        uses = {k: v for k, v in changes.items() if k in USES}
+        if not uses or not all(isinstance(v, bool) for v in uses.values()):
+            raise ValueError(f"give one or more of {', '.join(USES)} as true or false")
+        consent = set_consent(self._asset(asset_id), **uses)
+        return {use: consent[use] for use in USES}
 
     def _asset(self, asset_id: str) -> Asset:
         directory = self.library / asset_id
@@ -423,8 +432,7 @@ class App:
         def work(job: Job) -> dict:
             job.message = f"Loading RF-DETR {size}"
             detector = self._detector(size)
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            out = asset.directory / "runs" / f"follow-n{number}-{stamp}"
+            out = new_run_dir(asset.directory / "runs", f"follow-n{number}")
 
             job.message = "Finding players"
             tracks, tracks_folder, reused = load_or_track(
@@ -487,6 +495,7 @@ class App:
                      "seconds": round(sum(m.end - m.start for m in moments), 1),
                      "captions": [m.caption for m in moments]},
             "exports": [{**e, "url": f"{base}/{e['file']}"} for e in list_exports(folder)],
+            "learning": self.learning(),
         }
 
     def position(self, asset_id: str, run: str, t: float) -> dict:
@@ -534,8 +543,7 @@ class App:
         tap = Seed(t=float(t), x=x * asset.video.display_width, y=y * asset.video.display_height)
 
         def work(job: Job) -> dict:
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            out = asset.directory / "runs" / f"follow-n{target.number}-{stamp}"
+            out = new_run_dir(asset.directory / "runs", f"follow-n{target.number}")
             job.message = f"Following {target.label} again"
             try:
                 metrics = correct_run(
@@ -555,7 +563,18 @@ class App:
 
     def review(self, asset_id: str, run: str, event_id: str, verdict: str | None) -> dict:
         _, folder = self._follow_run(asset_id, run)
-        return save_review(folder, str(event_id), verdict)
+        reviews = save_review(folder, str(event_id), verdict)
+        update_calibration(self.library)  # every tick teaches the reel a little
+        return reviews
+
+    def learning(self) -> dict:
+        """What the ticks and crosses across all games have taught the reel."""
+        stats = review_stats(self.library)
+        learnt = load_calibration(self.library)
+        return {"checked": stats["checked"], "games": stats["games"], "types": {
+            kind: {"checked": s["checked"], "right": s["right"], "precision": s["precision"],
+                   "min_confidence": learnt.get(kind)}
+            for kind, s in stats["types"].items()}}
 
     def start_analyse(self, asset_id: str, run: str | None = None,
                       goals: list | None = None) -> Job:
@@ -771,6 +790,10 @@ class Handler(BaseHTTPRequestHandler):
                                          t=float(body.get("t", 0)), x=float(body.get("x", -1)),
                                          y=float(body.get("y", -1)))
                 return self._send_json({"job": job.id}, 202)
+            if url.path == "/api/consent":
+                body = self._json_body()
+                consent = self.app.set_consent(str(body.get("asset_id", "")), body)
+                return self._send_json({"consent": consent})
             if url.path == "/api/review":
                 body = self._json_body()
                 verdict = body.get("verdict")

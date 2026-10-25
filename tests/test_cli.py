@@ -241,3 +241,23 @@ def test_follow_then_analyze_with_marked_goals(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "GOAL  0:07" in out and (fixed / "highlights-vertical.mp4").is_file()
     assert main(["export", asset_id, "--library", str(library), "--run", "follow-n1-x"]) == 2
+
+
+def test_consent_command(tmp_path, capsys, landscape_clip):
+    library = tmp_path / "lib"
+    assert main(["ingest", str(landscape_clip), "--library", str(library)]) == 0
+    asset_id = capsys.readouterr().out.split()[1]
+    assert main(["consent", asset_id, "--library", str(library)]) == 0
+    assert "no   training our own models" in capsys.readouterr().out
+    assert main(["consent", asset_id, "--library", str(library), "--testing", "--training",
+                 "--note", "signed forms, folder A"]) == 0
+    out = capsys.readouterr().out
+    assert "yes  training our own models" in out and "no   showing it publicly" in out
+    assert "note  signed forms, folder A" in out
+    assert main(["consent", asset_id, "--library", str(library), "--no-training"]) == 0
+    assert "no   training our own models" in capsys.readouterr().out
+
+
+def test_reviews_command_without_any(tmp_path, capsys):
+    assert main(["reviews", "--library", str(tmp_path / "lib")]) == 0
+    assert "No moments checked yet" in capsys.readouterr().out

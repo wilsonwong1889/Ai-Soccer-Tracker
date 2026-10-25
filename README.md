@@ -19,6 +19,12 @@ Tell it the player's name and jersey number and tap them once. It:
 If it follows the wrong child for a while, tap the right one at that moment
 and it follows again.
 
+It learns in two ways, both on your computer only
+([docs/training.md](docs/training.md)): the highlight reel learns from
+your ✓/✗ how much to trust each kind of moment, and the player detector
+can be fine-tuned on frames you label from games whose families agreed to
+training.
+
 Every event is an automatic guess with a confidence, which you can tick or
 cross. Checked so far on synthetic games and a real two-person clip;
 accuracy on real youth footage is still to be measured. See
@@ -36,6 +42,7 @@ checked.
 | [docs/prior-art.md](docs/prior-art.md) | Existing tools, datasets and competitors, licenses verified: the reuse plan for R2–R5 |
 | [docs/labeling.md](docs/labeling.md) | Labelling frames in CVAT and scoring detection (R2) |
 | [docs/register.md](docs/register.md) | Every model, dataset and notable package, with its license |
+| [docs/training.md](docs/training.md) | Permission per video, building a training set, fine-tuning, learning from ticks |
 
 Quickest start: `uv run soccer-recorder serve` opens a local website where
 you drop videos in and follow a player (see [the local website](#the-local-website)).
@@ -70,6 +77,10 @@ uv run soccer-recorder serve    # opens http://127.0.0.1:8765 in your browser
 - **Drop game videos onto the page** (or click to choose). Each one uploads
   and is checked and added to the library. Dropping the same video twice
   doesn't add it twice.
+- **Families agreed to:** three boxes per video (measuring accuracy,
+  training our AI, showing publicly). New videos have none. Tick one only
+  when every family whose child can be seen agreed in writing; training
+  refuses videos without the training box.
 - **Follow a player**:
   - Enter their name (optional) and jersey number.
   - Move the slider to a moment when they're clearly visible, then tap them.
@@ -335,12 +346,24 @@ uv run soccer-recorder fix <asset id> --at 760 --point 0.42,0.61
 - Every export records in `exports.json` how well it framed the player and
   how smoothly it panned (the R6 checks), and how long it took.
 
+## Training (docs/training.md)
+
+```sh
+uv run soccer-recorder consent <asset id> --training --note "signed forms, folder X"
+uv run soccer-recorder dataset --name first --labels <cvat export>.json --images data/labeling/<asset id>
+uv sync --extra detect --extra train
+uv run soccer-recorder train-detector data/datasets/first --name first-model
+uv run soccer-recorder serve --weights data/models/first-model   # only if it scored better
+uv run soccer-recorder reviews     # what your ticks taught the highlight reel
+```
+
 ## Tests
 
 ```sh
 uv run pytest          # a few seconds; generates its own clips
 uv run ruff check .
 SOCCER_RECORDER_MODEL_TESTS=1 uv run pytest   # also loads real RF-DETR weights
+SOCCER_RECORDER_TRAIN_TESTS=1 uv run pytest    # also fine-tunes for real (a few minutes)
 ```
 
 Tests that need FFmpeg are skipped (not failed) when it isn't installed.
