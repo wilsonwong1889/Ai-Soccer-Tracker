@@ -1,0 +1,43 @@
+# Model and data register
+
+Everything the product is built on, with its license and where it came from.
+Under [decisions.md](decisions.md) T10, only things that are free for
+commercial use go in. This list is also the raw material for the Kickstarter
+AI disclosure ([kickstarter-readiness.md](kickstarter-readiness.md)).
+
+Python packages are checked automatically: `tests/test_licenses.py` fails if
+any installed package declares a copyleft or non-commercial license. Models
+and data can't be checked that way, so they're listed here by hand. Add a row
+before anything new is used.
+
+## Models
+
+| Model | Used for | License | Source | Trained on | Notes |
+| --- | --- | --- | --- | --- | --- |
+| RF-DETR Nano / Small / Medium / Large, COCO-pretrained | R2 detection of people and the ball | **Apache-2.0** (per the [RF-DETR README](https://github.com/roboflow/rf-detr) model table) | Downloaded by the `rfdetr` package on first use from `storage.googleapis.com/rfdetr/`, cached in `~/.roboflow/models/` (366–405 MB each) | COCO, per Roboflow. **To confirm before the AI disclosure:** whether these sizes were also pretrained on Objects365 (the package also lists an Objects365 checkpoint) | Atto/Femto/Pico/XL/2XL are PML 1.0: blocked in code (`rfdetr_detector.SIZES`) |
+| DINOv2 backbone (inside RF-DETR) | Image features | Apache-2.0 ([repo](https://github.com/facebookresearch/dinov2)) | Part of the RF-DETR weights | Meta's curated LVD-142M | — |
+
+## Data
+
+| Dataset | Used for | License | Notes |
+| --- | --- | --- | --- |
+| Synthetic clips (`make-sample`) | Tests | Ours | No real people |
+| Our own permissioned youth footage | R2+ evaluation and fine-tuning | Ours, with written consent from every family whose child is identifiable | Planned. Never committed to git |
+| SoccerTrack v2 | R3 secondary evaluation, possibly training | CC BY 4.0 data / MIT code ([license](https://raw.githubusercontent.com/AtomScott/SoccerTrack-v2/main/LICENSE-DATA)) | Planned. Credit the authors. CC BY doesn't cover the filmed players' privacy rights |
+| SoccerNet, SportsMOT, Roboflow football sets | — | Research-only / non-commercial / unclear | **Not used** (decisions.md T11) |
+
+## Python dependencies worth knowing about
+
+All reviewed as fine for commercial use. Exceptions to the automatic check are
+listed in `tests/test_licenses.py` with their reasons.
+
+| Package | License | Why it's listed |
+| --- | --- | --- |
+| rfdetr | Apache-2.0 | The detector. Its `plus` extra (PML 1.0) is never installed |
+| torch, torchvision | torch: BSD-3-Clause, Apache-2.0, MIT, BSD-2-Clause and BSL-1.0 (the Boost license, not the Business Source License). torchvision: BSD | All permissive |
+| transformers | Apache-2.0 | Used by RF-DETR to build the backbone |
+| supervision | MIT | Detection result types |
+| certifi, tqdm | MPL-2.0 (tqdm: MPL-2.0 and MIT) | Weak copyleft: only changes to their own files would have to be shared, and we don't change them |
+| scipy | BSD | Bundles libgfortran: GPL-3.0 with the GCC Runtime Library Exception, which allows closed-source use |
+| matplotlib | PSF-style | Bundles FreeType under "FTL or GPL-2.0": we take the FTL |
+| nvidia-* CUDA libraries | NVIDIA proprietary, free to redistribute | Installed on Linux only, as PyTorch's GPU runtime. Not on macOS |

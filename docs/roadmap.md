@@ -18,8 +18,20 @@ can't be validated until real footage exists.
 
 ## R2: Detect players
 
+Status: code done; the accuracy check needs labelled real footage.
+
 Deliverable: `soccer-recorder detect <asset>` writes an annotated MP4 and a
 metrics JSON.
+
+- [x] `detect`: RF-DETR (Apache-2.0 sizes only, enforced in code) through a video or a
+      window of it. Writes `detections.jsonl` (boxes in source pixels), `annotated.mp4`,
+      `metrics.json` (speed as × real time, counts, scores, player heights)
+- [x] `benchmark`: sizes × input shapes on the same clip, as a table ready for benchmarks.md
+- [x] `sample-frames` → label in CVAT ([labeling.md](labeling.md)) → `evaluate`: precision,
+      recall, F1, AP50 at IoU 0.5 per class, recall by player height, ignore regions
+- [x] Verified end to end on a real image with people (cloud CPU); 169 tests
+- [ ] **On the M4:** `benchmark` on a real game clip; pick the default size and shape
+- [ ] **Labelled set** (≥ 200 frames, ≥ 2 games) and `evaluate` results against the targets below
 
 - Start with RF-DETR (Apache-2.0 sizes only) and benchmark YOLOX against it
   ([prior-art.md](prior-art.md#proposed-stack-for-r2r5)). No Ultralytics models

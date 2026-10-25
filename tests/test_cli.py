@@ -1,9 +1,11 @@
 import json
 
 import pytest
-from conftest import needs_ffmpeg
+from conftest import FixedDetector, needs_ffmpeg
 
+from soccer_recorder import cli
 from soccer_recorder.cli import main
+from soccer_recorder.rfdetr_detector import DetectorUnavailable
 
 pytestmark = needs_ffmpeg
 
@@ -45,3 +47,102 @@ def test_bad_input_exits_2_with_message(tmp_path, capsys, command):
     assert main([command, str(bogus), *(["--library", str(tmp_path / "lib")]
                                         if command == "ingest" else [])]) == 2
     assert capsys.readouterr().err.startswith("error:")
+
+
+@pytest.fixture
+def fixed_detector(monkeypatch):
+    made = []
+
+    def make(size="small", *, device=None, threshold=0.3, shape=None):
+        detector = FixedDetector()
+        detector.name = f"fixed-{size}"
+        detector.describe = lambda: {
+            "name": detector.name, "device": "cpu",
+            "input_shape": list(shape) if shape else [160, 90],
+        }
+        made.append((size, threshold, shape))
+        return detector
+
+    monkeypatch.setattr(cli, "make_detector", make)
+    return made
+
+
+def test_detect_on_a_file(tmp_path, capsys, landscape_clip, fixed_detector):
+    out = tmp_path / "run"
+    assert main(["detect", str(landscape_clip), "--out", str(out), "--threshold", "0.4"]) == 0
+    assert fixed_detector == [("small", 0.4, None)]
+    assert (out / "detections.jsonl").is_file() and (out / "annotated.mp4").is_file()
+    printed = capsys.readouterr().out
+    assert "players       2.0 per frame" in printed
+
+
+def test_detect_on_an_asset_id_prefix(tmp_path, capsys, landscape_clip, fixed_detector):
+    library = tmp_path / "lib"
+    assert main(["ingest", str(landscape_clip), "--library", str(library)]) == 0
+    asset_id = capsys.readouterr().out.split()[1]
+    assert main(["detect", asset_id[:6], "--library", str(library), "--no-video",
+                 "--size", "nano"]) == 0
+    runs = list((library / asset_id / "runs").iterdir())
+    assert len(runs) == 1 and runs[0].name.startswith("detect-fixed-nano-")
+    assert not (runs[0] / "annotated.mp4").exists()
+
+
+def test_detect_unknown_target(tmp_path, capsys, fixed_detector):
+    assert main(["detect", "nope", "--library", str(tmp_path)]) == 2
+    assert "no such file" in capsys.readouterr().err
+
+
+def test_detect_without_the_extra(tmp_path, capsys, landscape_clip, monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise DetectorUnavailable("RF-DETR isn't installed. Run: uv sync --extra detect")
+
+    monkeypatch.setattr(cli, "make_detector", unavailable)
+    assert main(["detect", str(landscape_clip), "--out", str(tmp_path)]) == 2
+    assert "uv sync --extra detect" in capsys.readouterr().err
+
+
+def test_benchmark_prints_a_row_per_size_and_shape(tmp_path, capsys, landscape_clip,
+                                                    fixed_detector):
+    out = tmp_path / "bench"
+    assert main(["benchmark", str(landscape_clip), "--sizes", "nano,small",
+                 "--shapes", "704x384", "--duration", "1", "--out", str(out)]) == 0
+    assert [(size, shape) for size, _, shape in fixed_detector] == [
+        ("nano", None), ("nano", (704, 384)), ("small", None), ("small", (704, 384)),
+    ]
+    rows = [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith("| fixed-")]
+    assert len(rows) == 4
+    assert len(json.loads((out / "benchmark.json").read_text())) == 4
+
+
+def test_sample_frames_then_evaluate(tmp_path, capsys, landscape_clip, fixed_detector):
+    frames = tmp_path / "frames"
+    assert main(["sample-frames", str(landscape_clip), "--every", "0.5",
+                 "--out", str(frames)]) == 0
+    names = sorted(p.name for p in frames.glob("*.jpg"))
+    assert names[0] == "landscape_00000.jpg" and len(names) == 4
+    listing = json.loads((frames / "frames.json").read_text())
+    assert [f["t"] for f in listing["frames"]] == [0.0, 0.5, 1.0, 1.5]
+
+    labels = tmp_path / "coco.json"
+    labels.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": names[0]}],
+        "categories": [{"id": 1, "name": "player"}],
+        # FixedDetector's first person, in the 320x180 original's pixels.
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [20, 20, 40, 120]}],
+    }))
+    report_path = tmp_path / "report.json"
+    assert main(["evaluate", "--labels", str(labels), "--images", str(frames),
+                 "--max-side", "160", "--out", str(report_path)]) == 0
+    printed = capsys.readouterr().out
+    assert "| person | 1 | 0.5 | 1.0 |" in printed  # second person box is a false positive
+    report = json.loads(report_path.read_text())
+    assert report["classes"]["person"]["recall"] == 1.0
+    assert fixed_detector[-1][1] == 0.05  # evaluate keeps low scores for AP50
+
+
+def test_evaluate_with_bad_labels(tmp_path, capsys, fixed_detector):
+    bad = tmp_path / "coco.json"
+    bad.write_text("{}")
+    assert main(["evaluate", "--labels", str(bad), "--images", str(tmp_path)]) == 2
+    assert "not a COCO labels file" in capsys.readouterr().err

@@ -38,3 +38,35 @@ def portrait_clip(tmp_path_factory):
         if b"display_rotation" in (error.stderr or b""):
             pytest.skip("writing rotation metadata needs FFmpeg 6.0 or newer")
         raise
+
+
+class FixedDetector:
+    """Stand-in detector: the same boxes on every frame, in detection-frame pixels.
+
+    Includes a "chair", which detection should filter out by label.
+    """
+
+    name = "fixed"
+
+    def __init__(self, boxes=None, fail_after=None):
+        from soccer_recorder.detect import Box
+
+        self.boxes = boxes if boxes is not None else [
+            Box(10, 10, 30, 70, 0.9, "person"),
+            Box(100, 20, 116, 52, 0.4, "person"),
+            Box(60, 40, 64, 44, 0.7, "sports ball"),
+            Box(0, 0, 8, 8, 0.8, "chair"),
+        ]
+        self.calls = 0
+        self.fail_after = fail_after
+        self.shapes = []
+
+    def detect(self, image):
+        self.calls += 1
+        self.shapes.append(image.shape)
+        if self.fail_after is not None and self.calls > self.fail_after:
+            raise RuntimeError("detector crashed")
+        return list(self.boxes)
+
+    def describe(self):
+        return {"name": self.name, "device": "cpu", "input_shape": [160, 90]}

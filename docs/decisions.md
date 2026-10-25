@@ -54,6 +54,8 @@ Not to be published before benchmarking and worst-case fulfilment modelling
 | T9 | **Project in `soccer-recorder/` of this repo, for now** | Only repository available to this session; Rojo ignores the folder | You create a dedicated repo (recommended before R2) |
 | T10 | **Decided 2026-10-25 (for now): only code and weights that are free for commercial use (Apache-2.0/MIT/BSD) go into the product.** Stack: RF-DETR (N/S/M/L), `trackers`, gta-link, SAM 2, PARSeq, ViTPose, torchreid ([prior-art.md](prior-art.md)) | Closed-source paid app. Rules out Ultralytics (AGPL), BoxMOT (AGPL), sn-gamestate (GPL), and non-commercial or PML weights | You choose to buy an Ultralytics Enterprise license |
 | T11 | **Decided 2026-10-25, follows from T10: no SoccerNet or SportsMOT data, and no checkpoints trained on them** | Research-only / non-commercial terms. Our own footage plus SoccerTrack v2 (CC BY 4.0) instead | Written permission from the dataset owners |
+| T12 | **Detection is an optional install** (`uv sync --extra detect`). Defaults: RF-DETR small, score ≥ 0.3, frames downscaled to a 1280 px long side, `--device auto` (Apple GPU, then CUDA, then CPU) | Keeps the core light and its tests torch-free. Small is the middle option until benchmarks say otherwise | R2 benchmarks and `evaluate` results on the M4 |
+| T13 | **Every installed package's license is checked by a test** (`tests/test_licenses.py`); models and data go in [register.md](register.md) by hand | Makes T10 hold automatically as dependencies change | — |
 
 ## Open questions
 

@@ -11,6 +11,11 @@ dependencies = [
 [project.scripts]
 soccer-recorder = "soccer_recorder.cli:main"
 
+[project.optional-dependencies]
+detect = [
+    "rfdetr>=1.11,<2",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

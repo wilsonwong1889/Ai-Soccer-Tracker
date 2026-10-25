@@ -4,9 +4,10 @@ An iPhone-first soccer recorder for parents: record the whole game from a
 tripod, pick your child, get player-focused tracking and highlights. This
 folder is the proof of concept, which works on pre-recorded footage.
 
-**Status: Release 1 of 10** (ingestion and setup). Nothing here detects,
-tracks or edits yet. See [the roadmap](docs/roadmap.md) for what each release
-delivers and how it's checked.
+**Status: Release 2 of 10** (detection). It finds players and the ball,
+with speed and accuracy tooling. The accuracy check still needs labelled real
+footage. Nothing tracks or edits yet. See [the roadmap](docs/roadmap.md) for
+what each release delivers and how it's checked.
 
 | Doc | What's in it |
 | --- | --- |
@@ -17,6 +18,8 @@ delivers and how it's checked.
 | [docs/kickstarter-readiness.md](docs/kickstarter-readiness.md) | What has to be true before the campaign goes live |
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure, and the results so far |
 | [docs/prior-art.md](docs/prior-art.md) | Existing tools, datasets and competitors, licenses verified: the reuse plan for R2–R5 |
+| [docs/labeling.md](docs/labeling.md) | Labelling frames in CVAT and scoring detection (R2) |
+| [docs/register.md](docs/register.md) | Every model, dataset and notable package, with its license |
 
 ## Setup (macOS, Apple Silicon)
 
@@ -95,17 +98,66 @@ for frame in iter_frames(asset.source_path, max_side=1280, fps=10):
     frame.time_s  # seconds from the start of the video
 ```
 
-R2 detection will build on `iter_frames`. The original stays at full
-resolution for exports.
+Detection builds on `iter_frames`. The original stays at full resolution for
+exports.
+
+## Detection (R2)
+
+Detection needs PyTorch and RF-DETR. They're kept out of the default install
+because they're large (several GB on Linux, which pulls in NVIDIA's GPU
+libraries; less on macOS):
+
+```sh
+uv sync --extra detect
+uv run soccer-recorder doctor        # "detect extra" should now be ok, with Apple MPS available
+```
+
+On first use, each model size downloads its weights (366–405 MB) from
+Roboflow's public storage into `~/.roboflow/models/`. Only the Apache-2.0
+sizes can be used (`nano`, `small`, `medium`, `large`); the others are
+refused (see [decisions.md](docs/decisions.md) T10).
+
+```sh
+# Players and ball through a whole game, or a window of it
+uv run soccer-recorder detect <asset id or video> --size small
+uv run soccer-recorder detect <asset id> --start 600 --duration 120 --fps 10
+
+# Compare speed across sizes and input shapes on one minute of video
+uv run soccer-recorder benchmark <asset id> --sizes nano,small,medium --shapes 704x384
+
+# Accuracy against labelled frames (see docs/labeling.md)
+uv run soccer-recorder sample-frames <asset id> --every 15
+uv run soccer-recorder evaluate --labels instances_default.json --images data/labeling/<asset id>
+```
+
+`detect` uses Apple's GPU automatically (`--device auto`). It writes a run
+folder under the asset (`data/library/<id>/runs/detect-…/`) containing:
+
+- `detections.jsonl`: one line per frame, boxes in the original video's
+  pixels, `[x1, y1, x2, y2, score, label]`;
+- `annotated.mp4`: the frames with boxes drawn (players amber, ball magenta);
+  skip it with `--no-video`;
+- `metrics.json`: speed, as `realtime_factor` (wall-clock seconds per second
+  of video; below 1 is faster than real time), players per frame, how often
+  the ball is seen, player heights in pixels, and the detector settings.
+
+RF-DETR's default input is a square (512×512 for small), so a wide 16:9
+frame gets squeezed. `--shape 704x384` keeps the proportions at a similar
+cost. Whether that finds more small players is exactly what `benchmark` and
+`evaluate` are for.
 
 ## Tests
 
 ```sh
-uv run pytest          # 41 tests, a few seconds; generates its own clips
+uv run pytest          # a few seconds; generates its own clips
 uv run ruff check .
+SOCCER_RECORDER_MODEL_TESTS=1 uv run pytest   # also loads real RF-DETR weights
 ```
 
 Tests that need FFmpeg are skipped (not failed) when it isn't installed.
+Detection tests use a stand-in detector, so they pass without the detect
+extra. `tests/test_licenses.py` fails if any installed package is copyleft
+or non-commercial (decisions.md T10).
 
 ## Privacy rules for this folder
 
