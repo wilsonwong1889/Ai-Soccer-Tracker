@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from conftest import FixedDetector, needs_ffmpeg
@@ -226,3 +227,17 @@ def test_follow_then_analyze_with_marked_goals(tmp_path, capsys, monkeypatch):
 
     assert main(["analyze", asset_id, "--library", str(library), "--goals", "0.1,0.1,0.1"]) == 2
     assert "four fractions of the frame" in capsys.readouterr().err
+
+    # A fix with a second tap, then a highlight reel from the fixed run.
+    x1, y1, x2, y2 = scene.players[0].box(5.0)
+    assert main(["fix", asset_id, "--library", str(library), "--at", "5",
+                 "--point", f"{(x1 + x2) / 2 / width:.4f},{(y1 + y2) / 2 / height:.4f}",
+                 "--no-video"]) == 0
+    out = capsys.readouterr().out
+    assert "taps        2 (the first, plus 1 fix)" in out
+    fixed = Path(out.split("outputs     ")[1].strip())
+    assert not (fixed / "followed.mp4").exists()
+    assert main(["export", asset_id, "--library", str(library), "--vertical"]) == 0
+    out = capsys.readouterr().out
+    assert "GOAL  0:07" in out and (fixed / "highlights-vertical.mp4").is_file()
+    assert main(["export", asset_id, "--library", str(library), "--run", "follow-n1-x"]) == 2

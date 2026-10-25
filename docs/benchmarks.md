@@ -96,6 +96,54 @@ Stats in the clean run: 2 touches, 2 dribbles, 1/1 passes, 1 received,
 km/h). Sound alone, on a 20 s test: cheer found at 7.97–11.01 s (true
 8–11), whistle at 13.95–14.59 s and 3203 Hz (true 14–14.6 s, 3200 Hz).
 
+## R6: player cam and highlight reel
+
+### Framing, synthetic scenes
+
+The true path of the followed player, rendered at 15 fps. Measured by
+`playercam.framing_report`, which every export also saves in
+`exports.json`.
+
+- **Centred:** the share of frames with the player's centre in the middle
+  60% of the picture, both ways. Frames where the player is at the very edge
+  of the whole view, where no crop could centre them, are counted apart.
+- **Pan acceleration:** in picture widths per second squared.
+
+Run 2026-10-25.
+
+| Scene | Output | Centred | At the edge | Max pan acceleration |
+| --- | --- | --- | --- | --- |
+| match | 1280×720 | 100% of 149 | 0 | 0.18 |
+| match | 720×1280 | 100% of 149 | 0 | 0.58 |
+| crossing | 1280×720 | 100% of 96 | 23 | 0.14 |
+| crossing | 720×1280 | 100% of 110 | 9 | 0.46 |
+| blocker | 1280×720 | 100% of 111 | 8 | 0.12 |
+| blocker | 720×1280 | 100% of 119 | 0 | 0.39 |
+
+Before the camera eased to a stop at the frame's edges, the crossing scene's
+vertical cam peaked at 9.3 (a visible jolt where the player walked off the
+side). `tests/test_playercam.py` also runs 30 s of a player crossing the
+pitch and back, with ±4 px tracking noise and three half-second gaps. It
+requires ≥ 95% centred and a peak acceleration ≤ 1.0, in both shapes.
+
+### Export speed, cloud CPU (reference only)
+
+- **Machine:** Linux cloud container, 4 vCPU, no GPU (FFmpeg 6.1.1, software
+  decoding and x264), 2026-10-25.
+- **Clips:** synthetic `make-sample` pitches at 30 fps.
+- **Timed:** `render_playercam`, from decoding to the file with sound.
+
+| Source | Output | Frames | Wall time | × real time |
+| --- | --- | --- | --- | --- |
+| 1920×1080 H.264, 60 s | 1280×720 | 1,799 | 21.3 s | 2.8 |
+| 1920×1080 H.264, 60 s | 720×1280 | 1,799 | 22.5 s | 2.7 |
+| 3840×2160 HEVC, 30 s | 1280×720 | 899 | 17.7 s | 1.7 |
+| 3840×2160 HEVC, 30 s | 720×1280 | 899 | 18.7 s | 1.6 |
+
+At these speeds, a player cam of a 60-minute 4K game takes about 35 minutes;
+a 90 s highlight reel under a minute. On the M4 (to do), try FFmpeg's
+VideoToolbox decoding and encoding (risks T8).
+
 ## R2 onward: what to measure
 
 These feed the reward economics in [risks.md](risks.md#financial). Each one is

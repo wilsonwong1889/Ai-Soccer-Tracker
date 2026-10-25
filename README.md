@@ -4,14 +4,20 @@ An iPhone-first soccer recorder for parents: record the whole game from a
 tripod, pick your child, get player-focused tracking and highlights. This
 folder is the proof of concept, which works on pre-recorded footage.
 
-**Status: about halfway** (R1–R4 built, R5 and R7 started).
+**Status: past halfway** (R1–R4 and R6 built; R5 and R7 partly built).
 Tell it the player's name and jersey number and tap them once. It:
 
 - follows them through the game, with a "Name #10" tag above them;
 - works out their analytics: time on the ball, touches, passes, dribbles,
   shots, distance, speed and a heatmap;
 - flags goals from the ball going into a marked goal, the crowd cheering and
-  the referee's whistle.
+  the referee's whistle;
+- makes videos to keep: a **player cam** (the whole game, zoomed in on your
+  child as if someone filmed only them) and a **highlight reel** of their
+  best moments, in landscape or vertical for phones.
+
+If it follows the wrong child for a while, tap the right one at that moment
+and it follows again.
 
 Every event is an automatic guess with a confidence, which you can tick or
 cross. Checked so far on synthetic games and a real two-person clip;
@@ -92,6 +98,15 @@ uv run soccer-recorder serve    # opens http://127.0.0.1:8765 in your browser
   - **Mark goals:** drag a box over each goal mouth once per video, so
     "ball in the goal" can be detected. The stats are then re-worked in
     seconds.
+  - **Videos to keep:** *Make player cam* or *Make highlight reel*, with
+    *Vertical, for phones* if you like. Each appears with **Watch** and
+    **Download** (named like `Emma-10-highlights.mp4`). The reel line says
+    how many moments it will have. If your ticks and crosses change after a
+    reel was made, it's marked *out of date*: make it again.
+  - **Wrong player? Fix it:** move the slider to where the follower is on
+    the wrong child (the amber box shows who it follows) and tap yours. It
+    follows again using all your taps, as a new run beside the old one,
+    and keeps your ticks and crosses.
 
 It's a tool for you on your Mac, not the product's upload service (that's
 R8). It only answers on this computer: it listens on 127.0.0.1 and ignores
@@ -285,6 +300,40 @@ Known weak spots:
   shows how often it was found);
 - teammates in the same kit can only be told apart by position until jersey
   numbers are read.
+
+## Player cam, highlight reel and fixes (R5, R6)
+
+```sh
+# A highlight reel of the latest follow run (or --run <folder name>)
+uv run soccer-recorder export <asset id> --kind highlights --vertical
+# The whole analysed stretch, zoomed in on the player
+uv run soccer-recorder export <asset id> --kind playercam
+# The follower got it wrong at 12:40: tap the right child then
+uv run soccer-recorder fix <asset id> --at 760 --point 0.42,0.61
+```
+
+- **Player cam:** a virtual camera. It crops the original video (up to
+  2560 px wide, so 4K keeps its detail) around the player:
+  - zoomed so they fill about a third of the picture height, never closer
+    than a quarter of the full frame;
+  - smoothed both ways in time, since the whole path is known, so it never
+    lags;
+  - easing out to the whole pitch while they're hidden, and to a gentle stop
+    at the edges of the frame.
+
+  The sound is kept. Output is 1280×720 or 720×1280.
+- **Highlight reel:** which moments go in:
+  - moments you ticked ✓ always do, and moments you crossed ✗ never do;
+  - unchecked goals, chances, shots, dribbles, tackles and completed passes
+    go in when they're at least 60% sure.
+
+  Each gets a lead-in (6 s before a goal, 4 s before a shot) and a caption
+  ("GOAL 12:31"). Overlapping clips merge. The reel is capped at 90 s,
+  keeping the best moments, in game order.
+- **Fix:** each tap "owns" the part of the game nearest to it, so a new tap
+  only changes things around its moment. Taps add up across fixes.
+- Every export records in `exports.json` how well it framed the player and
+  how smoothly it panned (the R6 checks), and how long it took.
 
 ## Tests
 

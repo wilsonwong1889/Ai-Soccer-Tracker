@@ -48,7 +48,8 @@ listed in `tests/test_licenses.py` with their reasons.
 ## Our own analysis code
 
 Ball path, team split, possession, passes, dribbles, shots, goals, cheering
-and whistle detection are our own code (numpy and FFmpeg only). They add no
+and whistle detection, the player cam and the highlight reel are our own code
+(numpy and FFmpeg; Pillow or OpenCV, already listed, to resize and draw). They add no
 models, weights or datasets to this register.
 
 ## Fonts

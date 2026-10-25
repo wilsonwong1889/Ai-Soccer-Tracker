@@ -2,6 +2,7 @@ import http.client
 import json
 import threading
 import time
+from urllib.parse import quote
 
 import pytest
 from conftest import FixedDetector, needs_ffmpeg
@@ -289,8 +290,8 @@ def test_follow_rejects_bad_requests(site, landscape_clip, change, status):
 
 
 
-@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
-def test_analytics_reviews_and_marking_goals(site, tmp_path):
+def follow_in_match(site, tmp_path):
+    """Upload the synthetic match and follow Emma #10 in it."""
     from synthetic import OracleDetector, match_audio, match_scene, with_audio
 
     app, request, state, choice = site
@@ -309,7 +310,14 @@ def test_analytics_reviews_and_marking_goals(site, tmp_path):
         "x": (x1 + x2) / 2 / width, "y": (y1 + y2) / 2 / height, "height_cm": 140})
     assert response.status == 202, body
     app.jobs.wait_idle()
-    run = state()["assets"][0]["runs"][0]
+    return scene, asset_id, state()["assets"][0]["runs"][0]
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_analytics_reviews_and_marking_goals(site, tmp_path):
+    app, request, state, _ = site
+    scene, asset_id, run = follow_in_match(site, tmp_path)
+    width, height = scene.size
     assert run["kind"] == "follow" and run["stats"]["passes_completed"] == 1
     assert run["stats"]["goals"] == 0  # goals not marked yet
 
@@ -344,3 +352,82 @@ def test_analytics_reviews_and_marking_goals(site, tmp_path):
     response, _ = request("POST", "/api/review", {"asset_id": asset_id, "run": run["name"],
                                                   "event": "nope-1", "verdict": "yes"})
     assert response.status == 404
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_player_cam_and_highlight_reel_downloads(site, tmp_path):
+    app, request, state, _ = site
+    scene, asset_id, run = follow_in_match(site, tmp_path)
+    ask = {"asset_id": asset_id, "run": run["name"]}
+    data = json.loads(request("GET", f"/api/analytics?asset={asset_id}&run={run['name']}")[1])
+    assert data["reel"]["moments"] >= 1 and data["exports"] == []
+    assert len(data["taps"]) == 1
+
+    for kind, vertical in (("playercam", False), ("highlights", True)):
+        response, body = request("POST", "/api/export", {**ask, "kind": kind, "vertical": vertical})
+        assert response.status == 202, body
+    app.jobs.wait_idle(60)
+    assert [j["status"] for j in state()["jobs"][:2]] == ["done", "done"]
+    exports = {e["file"]: e for e in state()["assets"][0]["runs"][0]["exports"]}
+    assert set(exports) == {"playercam.mp4", "highlights-vertical.mp4"}
+    assert exports["playercam.mp4"]["seconds"] == pytest.approx(scene.duration, abs=0.5)
+    assert not exports["highlights-vertical.mp4"]["out_of_date"]
+
+    url = exports["playercam.mp4"]["url"]
+    response, video = request("GET", url + "?download=Emma-10-player-cam.mp4")
+    assert response.status == 200 and len(video) > 1000
+    assert (response.getheader("Content-Disposition")
+            == 'attachment; filename="Emma-10-player-cam.mp4"')
+    response, _ = request("GET", url + "?download=" + quote('Zoë "10"/../x.mp4'))
+    assert response.getheader("Content-Disposition") == 'attachment; filename="x.mp4"'
+    response, _ = request("GET", url)  # to play: no download header
+    assert response.getheader("Content-Disposition") is None
+
+    # Crossing out every moment leaves nothing for a reel, and the made one is out of date.
+    for event in data["events"]:
+        request("POST", "/api/review", {**ask, "event": event["id"], "verdict": "no"})
+    data = json.loads(request("GET", f"/api/analytics?asset={asset_id}&run={run['name']}")[1])
+    assert data["reel"]["moments"] == 0
+    assert next(e for e in data["exports"] if e["kind"] == "highlights")["out_of_date"]
+    response, body = request("POST", "/api/export", {**ask, "kind": "highlights"})
+    assert response.status == 400 and b"no moments" in body
+    response, _ = request("POST", "/api/export", {**ask, "kind": "poster"})
+    assert response.status == 400
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_fixing_who_is_followed_makes_a_new_run(site, tmp_path):
+    app, request, state, _ = site
+    scene, asset_id, run = follow_in_match(site, tmp_path)
+    width, height = scene.size
+    response, body = request("GET", f"/api/position?asset={asset_id}&run={run['name']}&t=1.0")
+    position = json.loads(body)
+    x1, y1, x2, y2 = scene.players[0].box(1.0)
+    assert position["state"] == "seen"
+    assert position["box"][0] == pytest.approx(x1 / width, abs=0.03)
+
+    dribble = json.loads(request("GET", f"/api/analytics?asset={asset_id}&run={run['name']}")[1])
+    dribble = next(e for e in dribble["events"] if e["type"] == "dribble")
+    request("POST", "/api/review", {"asset_id": asset_id, "run": run["name"],
+                                    "event": dribble["id"], "verdict": "yes"})
+    x1, y1, x2, y2 = scene.players[0].box(5.0)
+    tap = {"asset_id": asset_id, "run": run["name"], "t": 5.0,
+           "x": (x1 + x2) / 2 / width, "y": (y1 + y2) / 2 / height}
+    response, body = request("POST", "/api/fix", tap)
+    assert response.status == 202, body
+    app.jobs.wait_idle()
+    job = state()["jobs"][0]
+    assert job["status"] == "done", job
+    assert "kept your ticks and crosses on 1 moment" in job["message"]
+    runs = state()["assets"][0]["runs"]
+    fixed = next(r for r in runs if r["name"] == job["result"]["run"])
+    assert fixed["corrections"] == 1 and fixed["label"] == "Emma #10"
+    data = json.loads(request("GET", f"/api/analytics?asset={asset_id}&run={fixed['name']}")[1])
+    assert len(data["taps"]) == 2 and data["reviews"] == {dribble["id"]: "yes"}
+
+    response, _ = request("POST", "/api/fix", {**tap, "t": 99.0})
+    app.jobs.wait_idle()
+    assert response.status == 202 and state()["jobs"][0]["status"] == "failed"
+    assert "part that was analysed" in state()["jobs"][0]["error"]
+    response, _ = request("POST", "/api/fix", {**tap, "x": 2})
+    assert response.status == 400

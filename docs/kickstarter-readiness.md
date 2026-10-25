@@ -12,7 +12,7 @@ anywhere.
 | --- | --- | --- | --- |
 | G1 | Pipeline set up and ingesting footage | ✔ R1 (Mac run pending) | — |
 | G2 | Permissioned real footage, including consent for **public** use in the campaign video (stricter than consent for internal testing) | Not started | You |
-| G3 | A real demo: the child selected, tracked, and an auto-framed clip exported from real footage | Not started | R2–R6 |
+| G3 | A real demo: the child selected, tracked, and an auto-framed clip exported from real footage | Software built (follow, player cam, highlight reel), checked on synthetic games only. Needs G2 footage | G2 |
 | G4 | Measured cost per analyzed hour (compute, storage, upload) | Not started | R2–R3 benchmarks |
 | G5 | Reward economics modelled worst case (all 120 h used) and expected case, in CAD | Not started | G4, Q-new-6 |
 | G6 | 10–20 parents shown real output; willingness-to-pay recorded | Not started | G3 |
@@ -22,7 +22,8 @@ anywhere.
 
 The demo video (G3) is the campaign's centrepiece, and the rules below make
 it non-negotiable that it shows real output. So the honest launch date is
-after R6, not after R1.
+after R6, not after R1. R6 is now built, so the demo waits on permissioned
+real footage (G2), and on checking the output on it.
 
 ## Kickstarter rules that apply
 

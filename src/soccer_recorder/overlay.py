@@ -82,23 +82,24 @@ def pick_font(text: str, font_px: int, candidates: tuple[str, ...] = FONT_CANDID
     return ImageFont.load_default(size=font_px)
 
 
-def label_sprite(text: str, font_px: int, rgb=HIGHLIGHT_RGB) -> np.ndarray:
-    """A rounded tag with a pointer underneath, as BGRA uint8."""
+def label_sprite(text: str, font_px: int, rgb=HIGHLIGHT_RGB, pointer: bool = True) -> np.ndarray:
+    """A rounded tag, with a pointer underneath unless `pointer` is False, as BGRA uint8."""
     from PIL import Image, ImageDraw
 
     font = pick_font(text, font_px)
     left, top, right, bottom = font.getbbox(text)
     pad_x, pad_y = round(font_px * 0.55), round(font_px * 0.35)
-    pointer = max(4, round(font_px * 0.45))
+    tip = max(4, round(font_px * 0.45)) if pointer else 0
     width = right - left + 2 * pad_x
     body = bottom - top + 2 * pad_y
-    image = Image.new("RGBA", (width, body + pointer), (0, 0, 0, 0))
+    image = Image.new("RGBA", (width, body + tip), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle([0, 0, width - 1, body - 1], radius=round(body * 0.3),
                            fill=(*rgb, 240))
-    mid = width // 2
-    draw.polygon([(mid - pointer, body - 1), (mid + pointer, body - 1), (mid, body + pointer - 1)],
-                 fill=(*rgb, 240))
+    if tip:
+        mid = width // 2
+        draw.polygon([(mid - tip, body - 1), (mid + tip, body - 1), (mid, body + tip - 1)],
+                     fill=(*rgb, 240))
     draw.text((pad_x - left, pad_y - top), text, font=font, fill=(*TEXT_RGB, 255))
     rgba = np.array(image)
     return rgba[..., [2, 1, 0, 3]].copy()  # RGBA -> BGRA

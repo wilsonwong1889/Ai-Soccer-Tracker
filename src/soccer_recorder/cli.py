@@ -492,24 +492,80 @@ def _parse_goals(text: str) -> list[list[float]]:
                          "(x1,y1,x2,y2 as fractions of the frame, one box per goal)") from None
 
 
+def _follow_run(asset: Asset, name: str | None) -> Path:
+    """A follow run folder by name, or the newest one."""
+    runs = sorted((p for p in (asset.directory / "runs").glob("follow-*")
+                   if (p / "target.json").is_file()), key=lambda p: p.name[-15:])  # by time
+    run = asset.directory / "runs" / name if name else (runs[-1] if runs else None)
+    if run is None or not (run / "target.json").is_file():
+        raise ValueError("no follow run" + (f" {name!r}" if name else "")
+                         + ": run `soccer-recorder follow` first")
+    return run
+
+
+def _library_asset(target: str, library: Path | None, command: str) -> tuple[Path, Asset]:
+    video, asset = _resolve(target, library or default_library())
+    if asset is None:
+        raise ValueError(f"{command} works on library videos: ingest the video first")
+    return video, asset
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
     from .analytics import analyse_run, save_goals
 
-    video, asset = _resolve(args.target, args.library or default_library())
-    if asset is None:
-        raise ValueError("analyze works on library videos: ingest the video first")
+    video, asset = _library_asset(args.target, args.library, "analyze")
     if args.goals is not None:
         save_goals(asset.directory, _parse_goals(args.goals))
-    runs = sorted((asset.directory / "runs").glob("follow-*"))
-    run = asset.directory / "runs" / args.run if args.run else (runs[-1] if runs else None)
-    if run is None or not (run / "target.json").is_file():
-        raise ValueError("no follow run to analyse: run `soccer-recorder follow` first")
+    run = _follow_run(asset, args.run)
     result = analyse_run(video, run, goals_dir=asset.directory,
                          player_height_m=args.height_cm / 100 if args.height_cm else None)
     print(f"Analytics for {result['target']['name'] or ''} #{result['target']['number']} "
           f"({run.name})")
     _print_analytics(result)
     print(f"  saved       {run / 'analytics.json'}")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from .exports import make_export
+
+    video, asset = _library_asset(args.target, args.library, "export")
+    run = _follow_run(asset, args.run)
+    what = {"playercam": "player cam", "highlights": "highlight reel"}[args.kind]
+    print(f"Making the {what} ({'vertical' if args.vertical else 'landscape'}) from {run.name}")
+    made = make_export(video, run, args.kind, vertical=args.vertical,
+                       on_progress=_progress_printer())
+    print(file=sys.stderr)
+    if made.get("moments"):
+        for start, end, caption in made["moments"]:
+            print(f"  moment      {start:.1f}-{end:.1f} s  {caption}")
+    print(f"  length      {made['seconds']:.1f} s")
+    print(f"  saved       {run / made['file']}")
+    return 0
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    from .analytics import load_trajectory
+    from .exports import correct_run
+    from .follow import Seed
+
+    video, asset = _library_asset(args.target, args.library, "fix")
+    run = _follow_run(asset, args.run)
+    _, saved = load_trajectory(run / "target.json")
+    x, y = _parse_point(args.point, probe(video))
+    out = _run_dir(video, asset, f"follow-n{saved['target']['number']}")
+    print(f"Following #{saved['target']['number']} again from {run.name}, "
+          f"with a tap at {args.at:g} s")
+    metrics = correct_run(video, run, Seed(args.at, x, y), out, goals_dir=asset.directory,
+                          render=not args.no_video, on_progress=_progress_printer())
+    print(file=sys.stderr)
+    coverage = metrics["coverage"]
+    print(f"  taps        {len(metrics['taps'])} (the first, plus {len(metrics['taps']) - 1} "
+          f"fix{'es' if len(metrics['taps']) > 2 else ''})")
+    print(f"  found       {100 * (coverage['seen'] + coverage['filled']):.0f}% of the time")
+    print(f"  reviews     {metrics['reviews_kept']} kept")
+    _print_analytics(json.loads((out / "analytics.json").read_text()))
+    print(f"  outputs     {out}")
     return 0
 
 
@@ -561,7 +617,8 @@ def _add_window_args(parser: argparse.ArgumentParser, duration: float | None = N
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="soccer-recorder",
-        description="AI Soccer Recorder proof of concept (R1 ingestion, R2 detection).",
+        description="AI Soccer Recorder proof of concept: ingest, detect, track, follow, "
+                    "analyse, and make player cams and highlight reels.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     library_help = (
@@ -705,6 +762,26 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--height-cm", type=float, help="the player's height")
     analyze.add_argument("--library", type=Path, help=library_help)
     analyze.set_defaults(func=cmd_analyze)
+
+    export = sub.add_parser("export", help="make a player cam or highlight reel video")
+    export.add_argument("target", help="a library asset id (or its start)")
+    export.add_argument("--run", help="follow run folder name (default: the latest)")
+    export.add_argument("--kind", choices=["playercam", "highlights"], default="highlights",
+                        help="playercam: the whole game zoomed in on the player; "
+                             "highlights: their best moments (default)")
+    export.add_argument("--vertical", action="store_true", help="720x1280, for phones")
+    export.add_argument("--library", type=Path, help=library_help)
+    export.set_defaults(func=cmd_export)
+
+    fix = sub.add_parser("fix", help="follow again with one more tap where it went wrong")
+    fix.add_argument("target", help="a library asset id (or its start)")
+    fix.add_argument("--run", help="follow run folder name (default: the latest)")
+    fix.add_argument("--at", type=float, required=True, help="a moment (seconds) to tap")
+    fix.add_argument("--point", required=True,
+                     help="where the player really is then: X,Y pixels or fractions")
+    fix.add_argument("--no-video", action="store_true", help="skip drawing followed.mp4")
+    fix.add_argument("--library", type=Path, help=library_help)
+    fix.set_defaults(func=cmd_fix)
 
     serve = sub.add_parser("serve", help="open the local website: drop videos, run detection")
     serve.add_argument("--port", type=int, default=8765, help="default 8765")

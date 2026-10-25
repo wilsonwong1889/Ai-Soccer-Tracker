@@ -82,6 +82,7 @@ update. See [prior-art.md](prior-art.md#competitors).
 | T5 | **Processing speed on the M4 (16 GB)** may be too slow to iterate on full games | Proxies (R1). Benchmark MPS early. Rent a cloud GPU only when justified (ask first: it's a paid service) | R2 |
 | T6 | **Highlight detection quality.** The event rules (passes, dribbles, shots, goals) work on synthetic games but are unmeasured on real ones. Known traps:<br>• a small ball, often hidden in a wide shot;<br>• in indoor halls with several courts, cheering and whistles from neighbouring games;<br>• near misses cheered like goals | Candidates only, with confidence and ✓/✗ review (built). Goals need ball-in-goal evidence; cheering alone is only a *possible* goal. The *Ball seen* card shows the data quality. Measure precision per event type from reviews before any claim | R7 |
 | T7 | **Long, large uploads from phones** | Resumable uploads; the content-hash asset id makes retries idempotent | R8–R9 |
+| T8 | **A full-game player cam is slow to make.** It's 1.6–2.8× real time on a 4-core cloud CPU, about 35 min for a 60-minute 4K game, and in R8 it is server compute per game (F1) | Highlight reels are short (≤ 90 s) and fast; make the full player cam only on request. Measure on the M4 and try hardware decoding and encoding (VideoToolbox). Decide whether exports count toward the analysed minutes | R6 ✔ built, M4 and R8 |
 
 ## Licensing
 
@@ -95,7 +96,7 @@ update. See [prior-art.md](prior-art.md#competitors).
 
 | # | Risk | Mitigation |
 | --- | --- | --- |
-| P1 | **Every game video shows other people's children**, not just the subscriber's | Consent model before beta (R9). Possibly blur non-selected players in shared exports. Clear terms on who may record |
+| P1 | **Every game video shows other people's children**, not just the subscriber's | Consent model before beta (R9). The player cam and reel crop around the child, so fewer other children are in shot, but never none. Possibly blur non-selected players in shared exports. Clear terms on who may record |
 | P2 | **Minors' data laws** (e.g. COPPA in the US; PIPEDA and provincial laws in Canada) apply to images of children | Get legal advice before the beta and before the campaign makes privacy claims |
 | P3 | **Footage leaking**: through git, logs or shared manifests | R1: footage blocked from git; manifests hold no folder paths. R8: private storage, signed URLs, deletion on a retention schedule |
 | P4 | **Evaluation footage** used for R2–R5 | Written permission from each family, stored outside the repo, deletable on request. Never used for training without separate consent |

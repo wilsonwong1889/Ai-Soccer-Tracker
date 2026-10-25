@@ -187,6 +187,16 @@ def analyse(video: str | Path, tracks: Tracks, run_dir: str | Path, *,
     return result
 
 
+def load_run_tracks(run_dir: Path) -> Tracks:
+    """The tracks a follow run was made from (kept beside it in the runs folder)."""
+    run_dir = Path(run_dir)
+    saved = json.loads((run_dir / "target.json").read_text())
+    tracks_run = saved.get("tracks_run")
+    if not tracks_run or not (run_dir.parent / tracks_run / "tracks.npz").is_file():
+        raise LookupError("the tracking this run was made from is gone; follow the player again")
+    return Tracks.load(run_dir.parent / tracks_run / "tracks.npz")
+
+
 def analyse_run(video: str | Path, run_dir: Path, *, goals_dir: Path | None = None,
                 player_height_m: float | None = None) -> dict:
     """Analyse a follow run folder, loading the tracks it was made from.
@@ -194,11 +204,7 @@ def analyse_run(video: str | Path, run_dir: Path, *, goals_dir: Path | None = No
     Keeps the player height from an earlier analysis unless a new one is given.
     """
     run_dir = Path(run_dir)
-    saved = json.loads((run_dir / "target.json").read_text())
-    tracks_run = saved.get("tracks_run")
-    if not tracks_run or not (run_dir.parent / tracks_run / "tracks.npz").is_file():
-        raise LookupError("the tracking this run was made from is gone; follow the player again")
-    tracks = Tracks.load(run_dir.parent / tracks_run / "tracks.npz")
+    tracks = load_run_tracks(run_dir)
     if player_height_m is None and (run_dir / "analytics.json").is_file():
         previous = json.loads((run_dir / "analytics.json").read_text())
         player_height_m = previous.get("settings", {}).get("player_height_m")

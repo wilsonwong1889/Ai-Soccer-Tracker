@@ -12,6 +12,12 @@
 
 The jersey number is carried through and shown in the label. Reading it from
 the video to confirm (or find) the player is R5.
+
+Corrections: when the parent taps their child again at a moment where the
+follower got it wrong, each tap "owns" the stretch of game nearest to it
+(split halfway between taps). Linking runs from each tap within its
+stretch, and the stretches are joined. A newer tap at the same moment
+replaces the older one.
 """
 
 from __future__ import annotations
@@ -278,10 +284,56 @@ def build_trajectory(times: np.ndarray, chain: list[Tracklet], fps: float,
     return Trajectory(times=np.asarray(times, dtype=float), boxes=boxes, state=state)
 
 
-def follow(tracks: Tracks, seed: Seed, params: Params = DEFAULT_PARAMS) -> Trajectory:
+def _trim(item: Tracklet, lo: float, hi: float) -> Tracklet | None:
+    """The part of a tracklet within analysed frames [lo, hi], or None."""
+    keep = (item.frames >= lo) & (item.frames <= hi)
+    if not keep.any():
+        return None
+    if keep.all():
+        return item
+    index = np.flatnonzero(keep)
+    return Tracklet(item.id, item.frames[keep], item.boxes[keep], item.scores[keep],
+                    [item.features[i] for i in index])
+
+
+def link_with_seeds(items: list[Tracklet], found: list[tuple[Tracklet, int]], fps: float,
+                    params: Params) -> tuple[list[Tracklet], list[Link]]:
+    """Like link_chain, from several taps: each links within its own stretch of game."""
+    by_frame: dict[int, Tracklet] = {}
+    for item, frame in found:
+        by_frame[frame] = item  # a later tap at the same moment replaces an earlier one
+    ordered = sorted(by_frame.items())
+    chain: list[Tracklet] = []
+    links: list[Link] = []
+    for k, (frame, item) in enumerate(ordered):
+        lo = -np.inf if k == 0 else (ordered[k - 1][0] + frame) // 2 + 1
+        hi = np.inf if k == len(ordered) - 1 else (frame + ordered[k + 1][0]) // 2
+        local, seed_local = [], None
+        for candidate in items:
+            piece = _trim(candidate, lo, hi)
+            if piece is None:
+                continue
+            local.append(piece)
+            if candidate is item:
+                seed_local = piece
+        part, part_links = link_chain(local, seed_local, frame, fps, params)
+        chain += part
+        links += part_links
+    chain.sort(key=lambda t: t.start)
+    return chain, links
+
+
+def follow(tracks: Tracks, seed: Seed | list[Seed], params: Params = DEFAULT_PARAMS) -> Trajectory:
+    """Follow the player tapped at `seed`, or at each of several seeds (corrections)."""
+    seeds = [seed] if isinstance(seed, Seed) else list(seed)
+    if not seeds:
+        raise SeedNotFound("Tap the player at least once.")
     items = split_on_appearance(tracklets(tracks), tracks.fps)
-    seed_item, seed_frame = find_seed(items, tracks.times, seed)
-    chain, links = link_chain(items, seed_item, seed_frame, tracks.fps, params)
+    found = [find_seed(items, tracks.times, s) for s in seeds]
+    if len(found) == 1:
+        chain, links = link_chain(items, found[0][0], found[0][1], tracks.fps, params)
+    else:
+        chain, links = link_with_seeds(items, found, tracks.fps, params)
     trajectory = build_trajectory(tracks.times, chain, tracks.fps, params)
     trajectory.links = links
     return trajectory
@@ -290,7 +342,7 @@ def follow(tracks: Tracks, seed: Seed, params: Params = DEFAULT_PARAMS) -> Traje
 def follow_player(
     video: str | Path,
     tracks: Tracks,
-    seed: Seed,
+    seed: Seed | list[Seed],
     target: Target,
     out_dir: str | Path,
     *,
@@ -307,13 +359,15 @@ def follow_player(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    trajectory = follow(tracks, seed, params)
+    seeds = [seed] if isinstance(seed, Seed) else list(seed)
+    trajectory = follow(tracks, seeds, params)
     n = len(trajectory.state)
     counts = {s: trajectory.state.count(s) for s in ("seen", "filled", "lost")}
     located = [i for i, s in enumerate(trajectory.state) if s != "lost"]
     (out_dir / "target.json").write_text(json.dumps({
         "target": asdict(target),
-        "seed": asdict(seed),
+        "seed": asdict(seeds[0]),
+        "seeds": [asdict(s) for s in seeds],
         "tracks_run": tracks_run,
         "fps": tracks.fps,
         "links": [asdict(link) for link in trajectory.links],
@@ -335,7 +389,8 @@ def follow_player(
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "tool_version": __version__,
         "target": asdict(target),
-        "seed": asdict(seed),
+        "seed": asdict(seeds[0]),
+        "corrections": len(seeds) - 1,
         "tracks_run": tracks_run,
         "source": {"filename": info.filename, "duration_s": round(info.duration_s, 3)},
         "window": {"start_s": round(float(trajectory.times[0]), 3) if n else 0.0,

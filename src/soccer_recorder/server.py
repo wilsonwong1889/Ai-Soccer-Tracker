@@ -34,11 +34,13 @@ from .analytics import (
     analyse_run,
     load_goals,
     load_reviews,
+    load_trajectory,
     review_summary,
     save_goals,
     save_review,
 )
 from .detect import Detector, Progress, run_detection
+from .exports import correct_run, export_name, list_exports, make_export, reel_moments
 from .follow import Seed, Target, follow_player
 from .library import Asset, ingest, list_assets, load_asset
 from .media import fit_within, require_tool
@@ -108,11 +110,11 @@ class Jobs:
         }
 
     def submit(self, kind: str, title: str, work: Callable[[Job], dict | None],
-               asset_id: str | None = None) -> Job:
+               asset_id: str | None = None, queue: str | None = None) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], kind=kind, title=title, asset_id=asset_id)
         with self._lock:
             self._jobs[job.id] = job
-        self._queues[kind].submit(self._run, job, work)
+        self._queues[queue or kind].submit(self._run, job, work)
         return job
 
     def _run(self, job: Job, work: Callable[[Job], dict | None]) -> None:
@@ -171,6 +173,23 @@ def _safe_name(name: str) -> str:
     return name[-100:]
 
 
+def _progress_from(job: Job, lo: float, hi: float, verb: str) -> Callable[[Progress], None]:
+    """Report a stage's progress as the [lo, hi] part of the job's bar."""
+
+    def update(progress: Progress) -> None:
+        if job.cancel.is_set():
+            raise Cancelled()
+        total = progress.total_video_s or 1.0
+        done = min(1.0, progress.video_s / total)
+        job.progress = lo + (hi - lo) * done
+        rate = progress.video_s / progress.elapsed_s if progress.elapsed_s else 0
+        eta = (total - progress.video_s) / rate if rate else None
+        job.message = (f"{verb}: {progress.video_s:.0f} / {total:.0f} s"
+                       + (f" · about {eta / 60:.1f} min left" if eta else ""))
+
+    return update
+
+
 def _run_summary(asset: Asset, run_dir: Path) -> dict | None:
     try:
         metrics = json.loads((run_dir / "metrics.json").read_text())
@@ -199,6 +218,8 @@ def _run_summary(asset: Asset, run_dir: Path) -> dict | None:
         return {
             "kind": "follow",
             "stats": stats,
+            "corrections": metrics.get("corrections", 0),
+            "exports": [{**e, "url": f"{base_url}/{e['file']}"} for e in list_exports(run_dir)],
             "name": run_dir.name,
             "created_at": metrics.get("created_at"),
             "label": f"{target.get('name') or ''} #{target.get('number')}".strip(),
@@ -405,30 +426,18 @@ class App:
             stamp = time.strftime("%Y%m%d-%H%M%S")
             out = asset.directory / "runs" / f"follow-n{number}-{stamp}"
 
-            def progress_from(lo: float, hi: float, verb: str):
-                def update(progress: Progress) -> None:
-                    if job.cancel.is_set():
-                        raise Cancelled()
-                    total = progress.total_video_s or 1.0
-                    done = min(1.0, progress.video_s / total)
-                    job.progress = lo + (hi - lo) * done
-                    rate = progress.video_s / progress.elapsed_s if progress.elapsed_s else 0
-                    eta = (total - progress.video_s) / rate if rate else None
-                    job.message = (f"{verb}: {progress.video_s:.0f} / {total:.0f} s"
-                                   + (f" · about {eta / 60:.1f} min left" if eta else ""))
-                return update
-
             job.message = "Finding players"
             tracks, tracks_folder, reused = load_or_track(
                 asset.source_path, asset.directory / "runs", detector, duration_s=seconds,
-                on_progress=progress_from(0.0, TRACK_SHARE, "Finding players"),
+                on_progress=_progress_from(job, 0.0, TRACK_SHARE, "Finding players"),
             )
             job.progress = TRACK_SHARE
             job.message = f"Following {target.label}"
             try:
                 metrics = follow_player(
                     asset.source_path, tracks, seed, target, out,
-                    on_progress=progress_from(TRACK_SHARE, 0.97, f"Drawing {target.label}"),
+                    on_progress=_progress_from(job, TRACK_SHARE, 0.97,
+                                               f"Drawing {target.label}"),
                     tracks_run=tracks_folder.name,
                 )
                 job.message = "Working out the stats"
@@ -463,6 +472,8 @@ class App:
         reviews = load_reviews(folder)
         base = f"/files/{asset.asset_id}/runs/{folder.name}"
         video = folder / "followed.mp4"
+        moments = reel_moments(folder)
+        saved = json.loads((folder / "target.json").read_text())
         return {
             **data,
             "reviews": reviews,
@@ -471,7 +482,76 @@ class App:
             "asset_id": asset.asset_id,
             "run": folder.name,
             "filename": asset.original_filename,
+            "taps": saved.get("seeds") or [saved["seed"]],
+            "reel": {"moments": len(moments),
+                     "seconds": round(sum(m.end - m.start for m in moments), 1),
+                     "captions": [m.caption for m in moments]},
+            "exports": [{**e, "url": f"{base}/{e['file']}"} for e in list_exports(folder)],
         }
+
+    def position(self, asset_id: str, run: str, t: float) -> dict:
+        """Where the followed player is at t, as fractions of the frame (to check a run)."""
+        asset, folder = self._follow_run(asset_id, run)
+        trajectory, _ = load_trajectory(folder / "target.json")
+        found = trajectory.box_at(float(t))
+        if found is None:
+            return {"box": None, "state": "lost"}
+        box, state = found
+        width, height = asset.video.display_width, asset.video.display_height
+        return {"box": [round(float(box[0]) / width, 4), round(float(box[1]) / height, 4),
+                        round(float(box[2]) / width, 4), round(float(box[3]) / height, 4)],
+                "state": state}
+
+    def start_export(self, asset_id: str, run: str, kind: str, vertical: bool = False) -> Job:
+        """Make a player cam or highlight reel video for a follow run."""
+        asset, folder = self._follow_run(asset_id, run)
+        name = export_name(kind, vertical)  # checks the kind
+        if kind == "highlights" and not reel_moments(folder):
+            raise ValueError("no moments for a reel yet: tick ✓ the ones you want, "
+                             "or analyse more of the game")
+        target = json.loads((folder / "target.json").read_text())["target"]
+        label = Target(**target).label
+        what = {"playercam": "player cam", "highlights": "highlight reel"}[kind]
+
+        def work(job: Job) -> dict:
+            job.message = f"Making the {what}"
+            made = make_export(asset.source_path, folder, kind, vertical=vertical,
+                               on_progress=_progress_from(job, 0.0, 1.0, f"Making the {what}"))
+            job.message = f"{what.capitalize()} ready: {made['seconds']:.0f} s"
+            return {"run": folder.name, "file": name}
+
+        shape = "vertical" if vertical else "landscape"
+        return self.jobs.submit("export", f"{what.capitalize()} of {label} ({shape})", work,
+                                asset_id=asset_id, queue="detect")
+
+    def start_fix(self, asset_id: str, run: str, *, t: float, x: float, y: float) -> Job:
+        """Follow again with one more tap where the follower got it wrong."""
+        asset, folder = self._follow_run(asset_id, run)
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError("tap position must be inside the picture")
+        saved = json.loads((folder / "target.json").read_text())
+        target = Target(**saved["target"])
+        tap = Seed(t=float(t), x=x * asset.video.display_width, y=y * asset.video.display_height)
+
+        def work(job: Job) -> dict:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            out = asset.directory / "runs" / f"follow-n{target.number}-{stamp}"
+            job.message = f"Following {target.label} again"
+            try:
+                metrics = correct_run(
+                    asset.source_path, folder, tap, out, goals_dir=asset.directory,
+                    on_progress=_progress_from(job, 0.0, 0.97, f"Drawing {target.label}"))
+            except BaseException:
+                shutil.rmtree(out, ignore_errors=True)
+                raise
+            found = metrics["coverage"]["seen"] + metrics["coverage"]["filled"]
+            kept = metrics["reviews_kept"]
+            job.message = (f"Fixed: found {target.label} {100 * found:.0f}% of the time; "
+                           f"kept your ticks and crosses on {kept} moment{'s' * (kept != 1)}")
+            return {"run": out.name, "previous": folder.name}
+
+        return self.jobs.submit("detect", f"Fix who is {target.label} in "
+                                f"{asset.original_filename}", work, asset_id=asset_id)
 
     def review(self, asset_id: str, run: str, event_id: str, verdict: str | None) -> dict:
         _, folder = self._follow_run(asset_id, run)
@@ -545,7 +625,7 @@ class Handler(BaseHTTPRequestHandler):
     def _error(self, status: int, message: str) -> None:
         self._send_json({"error": message}, status)
 
-    def _send_file(self, path: Path) -> None:
+    def _send_file(self, path: Path, download: str | None = None) -> None:
         size = path.stat().st_size
         start, end = 0, size - 1
         status = HTTPStatus.OK
@@ -572,6 +652,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", CONTENT_TYPES[path.suffix.lower()])
         self.send_header("Content-Length", str(end - start + 1))
         self.send_header("Accept-Ranges", "bytes")
+        if download:  # save, don't play; the name is already made safe
+            self.send_header("Content-Disposition", f'attachment; filename="{download}"')
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
@@ -613,6 +695,16 @@ class Handler(BaseHTTPRequestHandler):
                                                           query.get("run", [""])[0]))
             except LookupError as error:
                 return self._error(404, str(error))
+        if url.path == "/api/position":
+            query = parse_qs(url.query)
+            try:
+                return self._send_json(self.app.position(query.get("asset", [""])[0],
+                                                         query.get("run", [""])[0],
+                                                         float(query.get("t", ["0"])[0])))
+            except LookupError as error:
+                return self._error(404, str(error))
+            except ValueError as error:
+                return self._error(400, str(error))
         if url.path == "/api/frame":
             query = parse_qs(url.query)
             try:
@@ -634,7 +726,8 @@ class Handler(BaseHTTPRequestHandler):
             path = self.app.file_path(match[1], unquote(match[2]))
             if path is None:
                 return self._error(404, "Not found")
-            return self._send_file(path)
+            download = parse_qs(url.query).get("download", [None])[0]
+            return self._send_file(path, _safe_name(download) if download else None)
         return self._error(404, "Not found")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -665,6 +758,18 @@ class Handler(BaseHTTPRequestHandler):
                     seconds=float(seconds) if seconds else None,
                     height_cm=float(body["height_cm"]) if body.get("height_cm") else None,
                 )
+                return self._send_json({"job": job.id}, 202)
+            if url.path == "/api/export":
+                body = self._json_body()
+                job = self.app.start_export(str(body.get("asset_id", "")),
+                                            str(body.get("run", "")),
+                                            str(body.get("kind", "")), bool(body.get("vertical")))
+                return self._send_json({"job": job.id}, 202)
+            if url.path == "/api/fix":
+                body = self._json_body()
+                job = self.app.start_fix(str(body.get("asset_id", "")), str(body.get("run", "")),
+                                         t=float(body.get("t", 0)), x=float(body.get("x", -1)),
+                                         y=float(body.get("y", -1)))
                 return self._send_json({"job": job.id}, 202)
             if url.path == "/api/review":
                 body = self._json_body()

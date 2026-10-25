@@ -17,6 +17,7 @@ from soccer_recorder.follow import (
     find_seed,
     follow,
     link_chain,
+    link_with_seeds,
 )
 from soccer_recorder.tracking import Tracklet, split_on_appearance
 
@@ -143,6 +144,43 @@ def test_split_where_colours_change():
     assert len(steady) == 1
 
 
+# --- corrections: more than one tap ---
+
+def test_a_correction_tap_wins_its_stretch_of_the_game():
+    seed = tracklet(1, 0, 20, 100, dx=5)  # ends at x = 195
+    wrong = tracklet(2, 30, 20, 245, dx=5)  # right where they should be, but not them
+    right = tracklet(3, 30, 20, 60, dx=5)
+    items = [seed, wrong, right]
+    chain, _ = link_chain(items, seed, 5, FPS, Params())
+    assert [t.id for t in chain] == [1, 2]  # the mistake
+    chain, _ = link_with_seeds(items, [(seed, 5), (right, 40)], FPS, Params())
+    assert [t.id for t in chain] == [1, 3]
+
+
+def test_a_later_tap_at_the_same_moment_replaces_the_earlier_one():
+    a, b = tracklet(1, 0, 20, 100), tracklet(2, 0, 20, 400)
+    chain, _ = link_with_seeds([a, b], [(a, 10), (b, 10)], FPS, Params())
+    assert [t.id for t in chain] == [2]
+
+
+def test_a_piece_spanning_two_taps_is_used_once():
+    long = tracklet(1, 0, 60, 100)
+    chain, _ = link_with_seeds([long], [(long, 5), (long, 50)], FPS, Params())
+    frames = np.concatenate([t.frames for t in chain])
+    assert sorted(frames.tolist()) == list(range(60))
+
+
+def test_follow_needs_at_least_one_tap():
+    times = np.arange(5) / FPS
+    from soccer_recorder.tracking import Tracks
+
+    tracks = Tracks(fps=FPS, start_s=0.0, times=times, frame=np.zeros(0, int),
+                    track=np.zeros(0, int), boxes=np.zeros((0, 4)), scores=np.zeros(0),
+                    features=np.zeros((0, FEATURE_SIZE)), size=(640, 360))
+    with pytest.raises(SeedNotFound):
+        follow(tracks, [])
+
+
 # --- whole pipeline on synthetic games (needs the tracker) ---
 
 def accuracy(scene, truth, who, trajectory):
@@ -177,6 +215,28 @@ def test_follows_the_tapped_player_through_hiding_and_crossings(tmp_path, make_s
     on, wrong, visible = accuracy(scene, truth, who, trajectory)
     assert wrong == 0, "followed someone else"
     assert on >= 0.9 * visible
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not (has_tracker and has_pillow), reason="detect extra not installed")
+def test_a_second_tap_switches_who_is_followed_from_there_on(tmp_path):
+    from soccer_recorder.tracking import run_tracking
+
+    scene = blocker_scene()
+    truth = scene.write(tmp_path / "scene.mp4")
+    tracks = run_tracking(tmp_path / "scene.mp4", OracleDetector(truth, jitter=2), tmp_path / "t",
+                          fps=scene.fps)
+    target, teammate = scene.players[0], scene.players[1]
+    taps = []
+    for player, t in ((target, 1.0), (teammate, 6.0)):
+        x1, y1, x2, y2 = player.box(t)
+        taps.append(Seed(t, (x1 + x2) / 2, (y1 + y2) / 2))
+    trajectory = follow(tracks, taps)
+    for who, when in (("target", lambda t: t <= 2.5), ("teammate", lambda t: t >= 5.0)):
+        frames = [i for i, t in enumerate(tracks.times) if when(t) and truth[who][i] is not None]
+        on = [i for i in frames if trajectory.state[i] != "lost"
+              and iou(trajectory.boxes[i], truth[who][i]) >= 0.5]
+        assert len(on) >= 0.9 * len(frames), who
 
 
 @needs_ffmpeg
