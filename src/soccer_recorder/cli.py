@@ -1,5 +1,5 @@
 """Command line: soccer-recorder doctor | probe | ingest | list | make-sample |
-detect | benchmark | sample-frames | evaluate | serve."""
+detect | benchmark | sample-frames | evaluate | track | follow | serve."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ from .rfdetr_detector import (
     parse_shape,
 )
 from .sample import make_sample
+from .tracking import load_or_track
 
 MIN_PYTHON = (3, 12)
 
@@ -237,10 +238,13 @@ def _resolve(target: str, library: Path) -> tuple[Path, Asset | None]:
     raise ValueError(f"{target}: no such file, and no asset in {library} starts with that id")
 
 
+def _runs_base(video: Path, asset: Asset | None) -> Path:
+    return asset.directory / "runs" if asset else Path("data/runs") / video.stem
+
+
 def _run_dir(video: Path, asset: Asset | None, name: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = asset.directory / "runs" if asset else Path("data/runs") / video.stem
-    return base / f"{name}-{stamp}"
+    return _runs_base(video, asset) / f"{name}-{stamp}"
 
 
 def _progress_printer():
@@ -398,6 +402,64 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_point(text: str, info: VideoInfo) -> tuple[float, float]:
+    try:
+        x, y = (float(v) for v in text.split(","))
+    except ValueError:
+        raise ValueError(f"--point must look like 640,360 (or 0.5,0.5), not {text!r}") from None
+    if 0 <= x <= 1 and 0 <= y <= 1:  # fractions of the frame
+        return x * info.display_width, y * info.display_height
+    return x, y
+
+
+def cmd_track(args: argparse.Namespace) -> int:
+    from .overlay import render_tracks
+
+    video, asset = _resolve(args.target, args.library or default_library())
+    detector = make_detector(args.size, device=args.device, threshold=args.threshold)
+    print(f"Tracking players with {detector.name} on {detector.describe()['device']}: "
+          f"{video.name}")
+    tracks, folder, cached = load_or_track(
+        video, _runs_base(video, asset), detector, fps=args.fps, start_s=args.start,
+        duration_s=args.duration, max_side=args.max_side, fresh=args.fresh,
+        on_progress=_progress_printer())
+    print(file=sys.stderr)
+    metrics = json.loads((folder / "metrics.json").read_text())
+    if not args.no_video:
+        render_tracks(video, tracks, folder / "tracks.mp4", max_side=args.max_side)
+    print(f"  {'reused' if cached else 'tracked'}     {metrics['frames']} frames, "
+          f"{metrics['tracks']['count']} tracks (median {metrics['tracks']['median_length_s']} s), "
+          f"{metrics['tracks']['per_frame']} players per frame")
+    print(f"  outputs     {folder}")
+    return 0
+
+
+def cmd_follow(args: argparse.Namespace) -> int:
+    from .follow import Seed, Target, follow_player
+
+    video, asset = _resolve(args.target, args.library or default_library())
+    info = probe(video)
+    x, y = _parse_point(args.point, info)
+    target = Target(number=args.number, name=args.name or "")
+    detector = make_detector(args.size, device=args.device, threshold=args.threshold)
+    print(f"Following {target.label} from {args.at:g} s in {video.name}")
+    tracks, folder, cached = load_or_track(
+        video, _runs_base(video, asset), detector, fps=args.fps, start_s=args.start,
+        duration_s=args.duration, max_side=args.max_side, on_progress=_progress_printer())
+    print(file=sys.stderr)
+    out = args.out or _run_dir(video, asset, f"follow-n{args.number}")
+    metrics = follow_player(video, tracks, Seed(args.at, x, y), target, out,
+                            max_side=args.max_side, on_progress=_progress_printer())
+    print(file=sys.stderr)
+    coverage = metrics["coverage"]
+    print(f"  found       {100 * (coverage['seen'] + coverage['filled']):.0f}% of the time "
+          f"({100 * coverage['seen']:.0f}% seen, {100 * coverage['filled']:.0f}% filled in)")
+    print(f"  links       {metrics['links']} ({metrics['uncertain_links']} uncertain)")
+    print(f"  tracks      {'reused from' if cached else 'saved in'} {folder.name}")
+    print(f"  outputs     {out}")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import App, make_server
 
@@ -550,6 +612,36 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--out", type=Path, help="report JSON (default next to the labels)")
     evaluate.set_defaults(func=cmd_evaluate)
 
+    track = sub.add_parser("track", help="track every player; draws each track's id (R3)")
+    track.add_argument("target", help="a video file, or a library asset id (or its start)")
+    _add_detector_args(track)
+    track.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    track.add_argument("--fps", type=float, default=15.0,
+                       help="frames analysed per second (default 15)")
+    _add_window_args(track)
+    track.add_argument("--fresh", action="store_true", help="don't reuse earlier tracks")
+    track.add_argument("--no-video", action="store_true", help="skip tracks.mp4")
+    track.add_argument("--library", type=Path, help=library_help)
+    track.set_defaults(func=cmd_track)
+
+    follow = sub.add_parser("follow", help="follow one player and label them (name, number)")
+    follow.add_argument("target", help="a video file, or a library asset id (or its start)")
+    follow.add_argument("--number", required=True, help="the player's jersey number")
+    follow.add_argument("--name", help="the player's name, shown in the label")
+    follow.add_argument("--at", type=float, required=True,
+                        help="a moment (seconds) when the player is clearly visible")
+    follow.add_argument("--point", required=True,
+                        help="where the player is at that moment: X,Y in video pixels, "
+                             "or fractions such as 0.42,0.6")
+    _add_detector_args(follow)
+    follow.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    follow.add_argument("--fps", type=float, default=15.0,
+                        help="frames analysed per second (default 15)")
+    _add_window_args(follow)
+    follow.add_argument("--library", type=Path, help=library_help)
+    follow.add_argument("--out", type=Path, help="run folder")
+    follow.set_defaults(func=cmd_follow)
+
     serve = sub.add_parser("serve", help="open the local website: drop videos, run detection")
     serve.add_argument("--port", type=int, default=8765, help="default 8765")
     serve.add_argument("--library", type=Path, help=library_help)
@@ -563,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except (MediaError, IngestError, LabelError, DetectorUnavailable, ValueError) as error:
+        # SeedNotFound is a ValueError: its message tells the user what to do.
         print(f"error: {error}", file=sys.stderr)
         return 2
     except subprocess.CalledProcessError as error:

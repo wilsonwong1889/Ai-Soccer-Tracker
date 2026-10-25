@@ -4,10 +4,12 @@ An iPhone-first soccer recorder for parents: record the whole game from a
 tripod, pick your child, get player-focused tracking and highlights. This
 folder is the proof of concept, which works on pre-recorded footage.
 
-**Status: Release 2 of 10** (detection). It finds players and the ball,
-with speed and accuracy tooling. The accuracy check still needs labelled real
-footage. Nothing tracks or edits yet. See [the roadmap](docs/roadmap.md) for
-what each release delivers and how it's checked.
+**Status: Releases 3 and 4 of 10** (tracking, and following one player).
+Tell it the player's name and jersey number and tap them once. It follows
+them through the game and draws a "Name #10" tag above them. Checked so far on
+synthetic games and a real two-person clip. Accuracy on real youth footage is
+still to be measured. See [the roadmap](docs/roadmap.md) for what each
+release delivers and how it's checked.
 
 | Doc | What's in it |
 | --- | --- |
@@ -22,7 +24,7 @@ what each release delivers and how it's checked.
 | [docs/register.md](docs/register.md) | Every model, dataset and notable package, with its license |
 
 Quickest start: `uv run soccer-recorder serve` opens a local website where
-you drop videos in and run detection (see [the local website](#the-local-website)).
+you drop videos in and follow a player (see [the local website](#the-local-website)).
 
 ## Setup (macOS, Apple Silicon)
 
@@ -54,11 +56,22 @@ uv run soccer-recorder serve    # opens http://127.0.0.1:8765 in your browser
 - **Drop game videos onto the page** (or click to choose). Each one uploads
   and is checked and added to the library. Dropping the same video twice
   doesn't add it twice.
-- **Detect players** on any video: the first 1 or 5 minutes, or the whole
-  game, with the model size you pick. Progress and time left show under
-  *Activity*, and you can cancel.
-- **Watch** the result with boxes drawn, or play the original. *numbers*
-  opens the run's metrics.
+- **Follow a player**:
+  - Enter their name (optional) and jersey number.
+  - Move the slider to a moment when they're clearly visible, then tap them.
+  - Choose how much to analyse (the first 1 or 5 minutes, or the whole game)
+    and press *Start following*.
+
+  It finds every player, follows yours through the game, and makes a video
+  with a "Name #10" tag above them and a ring at their feet. Following a
+  second child in the same video reuses the first run's tracking, so it's
+  much faster.
+- **Detect all players** shows every detected person and the ball, for
+  checking detection.
+- Progress and time left show under *Activity*, and you can cancel.
+- **Watch** any result, or play the original. *numbers* opens the run's
+  metrics: how much of the time the player was found, and how many times the
+  follower had to reconnect them.
 
 It's a tool for you on your Mac, not the product's upload service (that's
 R8). It only answers on this computer: it listens on 127.0.0.1 and ignores
@@ -173,6 +186,40 @@ RF-DETR's default input is a square (512×512 for small), so a wide 16:9
 frame gets squeezed. `--shape 704x384` keeps the proportions at a similar
 cost. Whether that finds more small players is exactly what `benchmark` and
 `evaluate` are for.
+
+## Tracking and following (R3, R4)
+
+```sh
+# Track every player; tracks.mp4 shows each track's id
+uv run soccer-recorder track <asset id> --duration 120
+
+# Follow one player: their number (and name), and where they are at one moment
+uv run soccer-recorder follow <asset id> --number 10 --name Emma --at 12 --point 0.42,0.61
+```
+
+`--point` is where the player is at `--at` seconds: video pixels, or
+fractions of the frame (0.5,0.5 is the centre). The website gets both from
+your tap. How it works:
+
+1. **Tracking:** RF-DETR finds people in 15 frames per second (`--fps`),
+   and ByteTrack links them into tracks (`trackers`, Apache-2.0). Each
+   tracked box gets a simple colour description of hair, shirt and
+   shorts/socks. Saved in a `tracks-…` folder, with the tracks in MOT
+   format (`tracks.txt`) for scoring against labelled clips later.
+2. **Following:** the tap picks a track. When it ends (the player was
+   hidden, or the tracker lost them), the follower picks the track that
+   continues it. It must start where the player could have got to in that
+   time, at about the same size, and look like the player did when tapped.
+   Each reconnection is scored; close calls are marked *uncertain*.
+3. **Drawing:** gaps of up to 3 s between pieces are filled in (the tag
+   fades while the player is hidden). The path is smoothed and drawn at the
+   video's frame rate, so the tag glides. Names with accents or in other
+   scripts use a font on your computer that has those letters.
+
+What it can't do yet: tell apart two teammates in the same kit who disappear
+together and come out in the same place. Reading the jersey number from the
+video (R5) is what will fix that. Until then, the number is shown in the tag
+and saved with the run.
 
 ## Tests
 

@@ -17,6 +17,7 @@ import importlib.util
 import json
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -29,7 +30,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .detect import Detector, Progress, run_detection
+from .follow import Seed, Target, follow_player
 from .library import Asset, ingest, list_assets, load_asset
+from .media import fit_within, require_tool
+from .tracking import load_or_track
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -46,6 +50,8 @@ CONTENT_TYPES = {
     ".jpg": "image/jpeg",
 }
 SIZES = ("nano", "small", "medium", "large")
+FRAME_MAX_SIDE = 960  # stills for tapping the player
+TRACK_SHARE = 0.85  # of a follow job's progress bar: tracking; the rest is drawing
 
 
 class Cancelled(Exception):
@@ -158,10 +164,31 @@ def _run_summary(asset: Asset, run_dir: Path) -> dict | None:
         metrics = json.loads((run_dir / "metrics.json").read_text())
     except (OSError, ValueError):
         return None
+    base_url = f"/files/{asset.asset_id}/runs/{run_dir.name}"
+    if metrics.get("kind") == "tracks":
+        return None  # cached input for following, not a result to show
+    if metrics.get("kind") == "follow":
+        target = metrics.get("target", {})
+        coverage = metrics.get("coverage", {})
+        video = run_dir / "followed.mp4"
+        return {
+            "kind": "follow",
+            "name": run_dir.name,
+            "created_at": metrics.get("created_at"),
+            "label": f"{target.get('name') or ''} #{target.get('number')}".strip(),
+            "seconds": metrics.get("window", {}).get("seconds"),
+            "seen": coverage.get("seen"),
+            "filled": coverage.get("filled"),
+            "links": metrics.get("links"),
+            "uncertain_links": metrics.get("uncertain_links"),
+            "video_url": f"{base_url}/followed.mp4" if video.is_file() else None,
+            "metrics_url": f"{base_url}/metrics.json",
+        }
     people = metrics.get("detections", {}).get("person", {})
     ball = metrics.get("detections", {}).get("sports ball", {})
     video = run_dir / "annotated.mp4"
     return {
+        "kind": "detect",
         "name": run_dir.name,
         "created_at": metrics.get("created_at"),
         "detector": metrics.get("detector", {}).get("name"),
@@ -264,11 +291,7 @@ class App:
             raise ValueError(f"size must be one of {', '.join(SIZES)}")
         if seconds is not None and seconds <= 0:
             raise ValueError("seconds must be positive")
-        directory = self.library / asset_id
-        known = re.fullmatch(r"[0-9a-f]{16}", asset_id) and (directory / "manifest.json").is_file()
-        if not known:
-            raise LookupError(f"no video {asset_id!r} in the library")
-        asset = load_asset(directory)
+        asset = self._asset(asset_id)
         label = "whole video" if seconds is None else f"first {seconds / 60:g} min"
 
         def work(job: Job) -> dict:
@@ -301,6 +324,95 @@ class App:
 
         return self.jobs.submit("detect", f"Detect players in {asset.original_filename} "
                                 f"({label}, {size})", work, asset_id=asset_id)
+
+    def _asset(self, asset_id: str) -> Asset:
+        directory = self.library / asset_id
+        known = re.fullmatch(r"[0-9a-f]{16}", asset_id) and (directory / "manifest.json").is_file()
+        if not known:
+            raise LookupError(f"no video {asset_id!r} in the library")
+        return load_asset(directory)
+
+    def frame_jpeg(self, asset_id: str, t: float) -> bytes:
+        """A still of the video at `t` seconds, for tapping the player."""
+        asset = self._asset(asset_id)
+        t = min(max(0.0, t), max(0.0, asset.video.duration_s - 0.05))
+        width, height = fit_within(asset.video.display_width, asset.video.display_height,
+                                   FRAME_MAX_SIDE)
+        result = subprocess.run(
+            [require_tool("ffmpeg"), "-v", "error", "-nostdin", "-ss", f"{t:.3f}",
+             "-i", str(asset.source_path), "-frames:v", "1", "-vf", f"scale={width}:{height}",
+             "-q:v", "3", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"],
+            capture_output=True,
+        )
+        if result.returncode != 0 or not result.stdout:
+            raise ValueError("couldn't read a frame at that time")
+        return result.stdout
+
+    def start_follow(self, asset_id: str, *, number: str, name: str = "", t: float,
+                     x: float, y: float, size: str = "small",
+                     seconds: float | None = None) -> Job:
+        """Track players, then follow the one tapped at (x, y) (fractions of the frame) at t."""
+        number = str(number).strip()
+        if not re.fullmatch(r"\d{1,3}", number):
+            raise ValueError("the jersey number should be 1 to 3 digits")
+        name = re.sub(r"[\x00-\x1f\x7f]", "", str(name)).strip()[:30]
+        if size not in SIZES:
+            raise ValueError(f"size must be one of {', '.join(SIZES)}")
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError("tap position must be inside the picture")
+        if seconds is not None and seconds <= 0:
+            raise ValueError("seconds must be positive")
+        if seconds is not None and t > seconds:
+            raise ValueError("the moment you tapped is after the part being analysed; "
+                             "pick an earlier moment or analyse more")
+        asset = self._asset(asset_id)
+        target = Target(number=number, name=name)
+        seed = Seed(t=float(t), x=x * asset.video.display_width,
+                    y=y * asset.video.display_height)
+        label = "whole video" if seconds is None else f"first {seconds / 60:g} min"
+
+        def work(job: Job) -> dict:
+            job.message = f"Loading RF-DETR {size}"
+            detector = self._detector(size)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            out = asset.directory / "runs" / f"follow-n{number}-{stamp}"
+
+            def progress_from(lo: float, hi: float, verb: str):
+                def update(progress: Progress) -> None:
+                    if job.cancel.is_set():
+                        raise Cancelled()
+                    total = progress.total_video_s or 1.0
+                    done = min(1.0, progress.video_s / total)
+                    job.progress = lo + (hi - lo) * done
+                    rate = progress.video_s / progress.elapsed_s if progress.elapsed_s else 0
+                    eta = (total - progress.video_s) / rate if rate else None
+                    job.message = (f"{verb}: {progress.video_s:.0f} / {total:.0f} s"
+                                   + (f" · about {eta / 60:.1f} min left" if eta else ""))
+                return update
+
+            job.message = "Finding players"
+            tracks, _, reused = load_or_track(
+                asset.source_path, asset.directory / "runs", detector, duration_s=seconds,
+                on_progress=progress_from(0.0, TRACK_SHARE, "Finding players"),
+            )
+            job.progress = TRACK_SHARE
+            job.message = f"Following {target.label}"
+            try:
+                metrics = follow_player(
+                    asset.source_path, tracks, seed, target, out,
+                    on_progress=progress_from(TRACK_SHARE, 1.0, f"Drawing {target.label}"),
+                )
+            except BaseException:
+                shutil.rmtree(out, ignore_errors=True)
+                raise
+            found = metrics["coverage"]["seen"] + metrics["coverage"]["filled"]
+            job.message = (f"Found {target.label} {100 * found:.0f}% of the time"
+                           + (" (reused earlier tracking)" if reused else ""))
+            return {"run": out.name}
+
+        return self.jobs.submit(
+            "detect", f"Follow {target.label} in {asset.original_filename} ({label}, {size})",
+            work, asset_id=asset_id)
 
     def file_path(self, asset_id: str, relative: str) -> Path | None:
         """A file inside an asset folder, or None if it isn't allowed."""
@@ -405,6 +517,22 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if url.path == "/api/state":
             return self._send_json(self.app.state())
+        if url.path == "/api/frame":
+            query = parse_qs(url.query)
+            try:
+                body = self.app.frame_jpeg(query.get("asset", [""])[0],
+                                           float(query.get("t", ["0"])[0]))
+            except LookupError as error:
+                return self._error(404, str(error))
+            except ValueError as error:
+                return self._error(400, str(error))
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return None
         match = re.fullmatch(r"/files/([0-9a-f]{16})/(.+)", url.path)
         if match:
             path = self.app.file_path(match[1], unquote(match[2]))
@@ -428,6 +556,17 @@ class Handler(BaseHTTPRequestHandler):
                 job = self.app.start_detection(
                     str(body.get("asset_id", "")), str(body.get("size", "small")),
                     float(seconds) if seconds else None,
+                )
+                return self._send_json({"job": job.id}, 202)
+            if url.path == "/api/follow":
+                body = self._json_body()
+                seconds = body.get("seconds")
+                job = self.app.start_follow(
+                    str(body.get("asset_id", "")),
+                    number=str(body.get("number", "")), name=str(body.get("name", "")),
+                    t=float(body.get("t", 0)), x=float(body.get("x", -1)),
+                    y=float(body.get("y", -1)), size=str(body.get("size", "small")),
+                    seconds=float(seconds) if seconds else None,
                 )
                 return self._send_json({"job": job.id}, 202)
             match = re.fullmatch(r"/api/jobs/([0-9a-f]{12})/cancel", url.path)

@@ -53,6 +53,18 @@
   .runs { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
   .run { padding: 6px 0; }
   #player { margin-top: 16px; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
+           padding: 16px; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .field input, .field select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line);
+                                background: var(--bg); color: var(--text); }
+  .field input { min-width: 0; }
+  #f-number { width: 6em; }
+  .tap { position: relative; margin: 8px 0; cursor: crosshair; background: #000; border-radius: 8px; overflow: hidden; }
+  .tap img { display: block; width: 100%; height: auto; min-height: 80px; }
+  #f-marker { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid #ffc400;
+              border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .55); pointer-events: none; }
   #player video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; }
   .empty { padding: 18px; text-align: center; }
   a { color: var(--accent); }
@@ -88,6 +100,37 @@
 
   <p class="small muted" id="footer"></p>
 </main>
+
+<dialog id="follow" aria-labelledby="follow-title">
+  <form id="follow-form" class="stack">
+    <div class="row"><strong id="follow-title" class="grow">Follow a player</strong>
+      <button type="button" data-close aria-label="Close">✕</button></div>
+    <div class="small muted" id="follow-video"></div>
+    <div class="row">
+      <label class="field grow">Player's name (optional)
+        <input id="f-name" maxlength="30" autocomplete="off" placeholder="e.g. Emma"></label>
+      <label class="field">Jersey number
+        <input id="f-number" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="10" required></label>
+    </div>
+    <div>
+      <div class="small"><strong>Tap your child</strong> at a moment when they're clearly visible.
+        Use the slider to pick the moment.</div>
+      <div id="tap" class="tap"><img id="f-frame" alt="A moment from the video"><span id="f-marker" hidden></span></div>
+      <div class="row small">
+        <input id="f-time" type="range" min="0" step="0.5" value="0" class="grow" aria-label="Moment in the video">
+        <span id="f-time-label">0:00</span></div>
+    </div>
+    <div class="row">
+      <label class="field">How much to analyse <select id="f-seconds"></select></label>
+      <label class="field">Model <select id="f-size"></select></label>
+    </div>
+    <div class="row">
+      <span id="f-hint" class="small muted grow"></span>
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary" id="follow-start" disabled>Start following</button>
+    </div>
+  </form>
+</dialog>
 
 <script>
 const ACTION = { "X-Soccer-Recorder": "1" };
@@ -197,7 +240,8 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-action]");
   if (!b) return;
   const { action, asset, url, title, job } = b.dataset;
-  if (action === "detect") {
+  if (action === "follow") openFollow(asset);
+  else if (action === "detect") {
     const c = choices[asset] || {};
     post("/api/detect", { asset_id: asset, size: c.size || "small", seconds: c.seconds ?? 60 });
   } else if (action === "watch") watch(url, title);
@@ -209,6 +253,74 @@ document.addEventListener("change", (e) => {
   const c = (choices[el.dataset.asset] ||= {});
   c[el.dataset.choice] = el.dataset.choice === "seconds"
     ? (el.value === "all" ? null : Number(el.value)) : el.value;
+});
+
+// ---------- following a player ----------
+const follow = { asset: null, t: 0, x: null, y: null };
+let frameTimer = null;
+const followSeconds = () => ($("f-seconds").value === "all" ? null : Number($("f-seconds").value));
+function openFollow(assetId) {
+  const a = state.assets.find((x) => x.asset_id === assetId);
+  if (!a) return;
+  follow.asset = a;
+  $("follow-video").textContent = `${a.filename} · ${duration(a.duration_s)}`;
+  $("f-seconds").innerHTML = lengthOptions(60);
+  $("f-size").innerHTML = sizeOptions((choices[assetId] || {}).size || "small");
+  limitSlider();
+  $("f-time").value = Math.min(5, Number($("f-time").max));
+  loadFrame();
+  $("follow").showModal();
+  $("f-number").focus();
+}
+function limitSlider() {
+  const a = follow.asset, limit = followSeconds();
+  const max = Math.max(0, Math.min(a.duration_s, limit ?? a.duration_s) - 0.2);
+  $("f-time").max = max.toFixed(1);
+  if (Number($("f-time").value) > max) { $("f-time").value = max; loadFrame(); }
+}
+function loadFrame() {
+  follow.t = Number($("f-time").value);
+  $("f-time-label").textContent = duration(follow.t);
+  follow.x = follow.y = null;
+  $("f-marker").hidden = true;
+  $("f-frame").src = `/api/frame?asset=${encodeURIComponent(follow.asset.asset_id)}&t=${follow.t}`;
+  updateFollow();
+}
+function updateFollow() {
+  const number = $("f-number").value.trim();
+  const numberOk = /^\d{1,3}$/.test(number), tapped = follow.x !== null;
+  $("follow-start").disabled = !(numberOk && tapped && state.detection_available);
+  $("f-hint").textContent = !state.detection_available ? "Detection isn't installed (uv sync --extra detect)."
+    : !numberOk ? "Enter the jersey number."
+    : !tapped ? "Now tap your child in the picture."
+    : `Ready to follow #${number}, starting from the moment you tapped (${duration(follow.t)}).`;
+}
+$("f-time").addEventListener("input", () => {
+  $("f-time-label").textContent = duration(Number($("f-time").value));
+  clearTimeout(frameTimer);
+  frameTimer = setTimeout(loadFrame, 250);
+});
+$("f-seconds").addEventListener("change", limitSlider);
+$("f-number").addEventListener("input", updateFollow);
+$("tap").addEventListener("click", (e) => {
+  const box = $("f-frame").getBoundingClientRect();
+  const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  follow.x = x; follow.y = y;
+  Object.assign($("f-marker").style, { left: `${100 * x}%`, top: `${100 * y}%` });
+  $("f-marker").hidden = false;
+  updateFollow();
+});
+$("follow").querySelectorAll("[data-close]").forEach((b) =>
+  b.addEventListener("click", () => $("follow").close()));
+$("follow-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if ($("follow-start").disabled) return;
+  post("/api/follow", {
+    asset_id: follow.asset.asset_id, number: $("f-number").value.trim(), name: $("f-name").value.trim(),
+    t: follow.t, x: follow.x, y: follow.y, seconds: followSeconds(), size: $("f-size").value,
+  });
+  $("follow").close();
 });
 
 // ---------- rendering ----------
@@ -255,7 +367,19 @@ function renderAssets(assets) {
                   bytes(a.size_bytes), a.device].filter(Boolean).map(esc).join(" · ");
     const warnings = (a.warnings || []).map((w) =>
       `<div><span class="tag">${esc(w.split(":")[0])}</span> <span class="small muted">${esc(w)}</span></div>`).join("");
-    const runs = a.runs.map((r) => `<div class="run row">
+    const runs = a.runs.map((r) => r.kind === "follow" ? `<div class="run row">
+        <span class="grow small">
+          <strong>Following ${esc(r.label)}</strong> · ${duration(r.seconds)} analysed
+          · found ${pct((r.seen || 0) + (r.filled || 0))} of the time
+          (${pct(r.seen)} seen, ${pct(r.filled)} filled in)
+          · ${esc(r.links)} reconnection${r.links === 1 ? "" : "s"}
+          ${r.uncertain_links ? `<span class="tag">${esc(r.uncertain_links)} uncertain</span>` : ""}
+          <span class="muted">· ${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</span>
+        </span>
+        ${r.video_url ? `<button data-action="watch" data-url="${esc(r.video_url)}"
+            data-title="${esc(a.filename + " · " + r.label)}">Watch</button>` : ""}
+        <a class="small" href="${esc(r.metrics_url)}" target="_blank">numbers</a>
+      </div>` : `<div class="run row">
         <span class="grow small">
           <strong>${esc(r.detector)}</strong> on ${esc(r.device)} · ${duration(r.seconds)} analysed
           · ${esc(r.realtime_factor)}× real time · ${esc(r.players_per_frame)} players per frame
@@ -274,10 +398,13 @@ function renderAssets(assets) {
       </div>
       ${warnings ? `<div class="stack small" style="margin-top:8px">${warnings}</div>` : ""}
       <div class="row" style="margin-top:10px">
+        <button class="primary" data-action="follow" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
+          ${busy.has(a.asset_id) ? "Working…" : "Follow a player"}</button>
+        <span class="small muted">or</span>
         <select data-choice="seconds" data-asset="${esc(a.asset_id)}" aria-label="How much to analyse">${lengthOptions(seconds)}</select>
         <select data-choice="size" data-asset="${esc(a.asset_id)}" aria-label="Model size">${sizeOptions(size)}</select>
-        <button class="primary" data-action="detect" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
-          ${busy.has(a.asset_id) ? "Detecting…" : "Detect players"}</button>
+        <button data-action="detect" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
+          Detect all players</button>
         ${state.detection_available ? "" : `<span class="small muted">Detection isn't installed:
           run <code>uv sync --extra detect</code>, then restart this page's server.</span>`}
       </div>

@@ -14,6 +14,8 @@ soccer-recorder = "soccer_recorder.cli:main"
 [project.optional-dependencies]
 detect = [
     "rfdetr>=1.11,<2",
+    "trackers>=2.6,<3",
+    "pillow>=10.1",
 ]
 
 [dependency-groups]

@@ -41,3 +41,16 @@ listed in `tests/test_licenses.py` with their reasons.
 | scipy | BSD | Bundles libgfortran: GPL-3.0 with the GCC Runtime Library Exception, which allows closed-source use |
 | matplotlib | PSF-style | Bundles FreeType under "FTL or GPL-2.0": we take the FTL |
 | nvidia-* CUDA libraries | NVIDIA proprietary, free to redistribute | Installed on Linux only, as PyTorch's GPU runtime. Not on macOS |
+| trackers | Apache-2.0 | ByteTrack, for tracking (R3) |
+| opencv-python | Apache-2.0 | Required by `trackers`. Its wheels bundle FFmpeg and Qt as shared LGPL libraries: fine to use as installed; don't modify and redistribute those libraries |
+| pillow | MIT-CMU | Draws the name tags |
+
+## Fonts
+
+Name tags use a font already on the computer that has every letter of the
+name (`overlay.FONT_CANDIDATES`: Arial/Arial Unicode/PingFang on macOS,
+Liberation/DejaVu/Noto on Linux). The font is only used to draw pixels into
+videos on that computer. If nothing suitable is installed, Pillow's built-in
+font (a cut-down Aileron Regular, basic Latin only) is used. A hosted service
+(R8) should bundle an openly licensed font such as Noto Sans instead of
+relying on system fonts.

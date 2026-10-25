@@ -29,7 +29,8 @@ for the recorder lives in `soccer-recorder/`, which Rojo doesn't sync.
 | Original resolution kept, small frames for detection (§4) | Two resolutions | **Done**: original untouched; `iter_frames` gives downscaled, constant-rate, upright frames |
 | Permissioned 5–10 min iPhone footage (§7) | Real test footage | **Missing**: needs you; blocks R2 |
 | Detection (§4, R2) | YOLO-style detection | **Built** with RF-DETR (Apache-2.0): `detect`, `benchmark`, `evaluate`. Accuracy unmeasured until real footage is labelled |
-| Tracking, OCR, re-ID (§4, R3–R5) | BoT-SORT, OCR, re-ID | Not built. Reuse plan with licenses verified in [prior-art.md](prior-art.md) |
+| Tracking and selection (§4, R3–R4) | BoT-SORT tracking; parent selects child | **Built:** ByteTrack (`trackers`), tap-to-select with name and number, following through hiding and crossings, "Name #10" overlay. Measured on synthetic games only |
+| Jersey OCR, re-ID (§4, R5) | Number recognition, re-ID | Started: number shown/saved, simple colour re-ID. Number reading not built |
 | Editing and export (§4, R6–R7) | Crops, highlights, FFmpeg | Missing; FFmpeg already a dependency |
 | Backend (§4, R8) | FastAPI, queue, object storage, Postgres/Supabase | Missing |
 | Billing and entitlements (§6) | 600-min reserve/settle/release ledger | Missing; asset ids from R1 give the idempotency key it needs |

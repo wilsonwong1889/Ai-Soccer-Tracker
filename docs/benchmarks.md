@@ -42,6 +42,33 @@ time. The M4 numbers decide feasibility.
 **To do on the M4:** `uv run soccer-recorder benchmark <asset> --sizes nano,small,medium --shapes 704x384`
 on a real game clip, and paste the table here.
 
+## R3/R4: following one player, synthetic games
+
+Not real footage: this checks the logic, not the detector. The scenes
+(`tests/synthetic.py`) have players drawn with hair, shirt, shorts and socks,
+and teammates in identical kits (only the hair differs). In the *blocker*
+scene the followed player walks behind a block for about 2.5 s, longer than
+ByteTrack keeps a lost track, while a teammate crosses the other way and a
+look-alike plays elsewhere. In *crossing*, an opponent passes in front of
+them and a teammate behind. Detections are the true boxes with 4 px noise
+and **15% randomly missing**. Run 2026-10-25 (cloud CPU).
+
+| Scene | Followed | Analysed at | On the right player | On someone else | Reconnections |
+| --- | --- | --- | --- | --- | --- |
+| blocker | target | 15 fps | 83 / 86 visible frames | 0 | 1 (score 0.97) |
+| blocker | teammate | 15 fps | 84 / 86 | 1 (last frame) | 1 (0.99) |
+| blocker | target | 7.5 fps | 40 / 43 | 0 | 1 (0.98) |
+| crossing | target | 15 fps | 115 / 117 | 0 | 1 (0.96) |
+| crossing | target | 7.5 fps | 57 / 59 | 1 (last frame) | 1 (0.97) |
+
+The single wrong frames sit at a clip's last frame, where 4 px of noise on a
+22 px-wide player is enough to drop the overlap below 0.5. The tests
+(`tests/test_follow.py`) require ≥ 90% on the right player and 0 frames on
+anyone else, with 3 px noise and 10% missing.
+
+On real footage (to do, M4): `uv run soccer-recorder follow …` on a labelled
+clip, compared with the labelled identity.
+
 ## R2 onward: what to measure
 
 These feed the reward economics in [risks.md](risks.md#financial). Each one is

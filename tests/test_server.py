@@ -202,3 +202,86 @@ def test_only_known_file_types_are_served(site, landscape_clip):
     assert response.status == 404
     response, _ = request("GET", f"/files/{asset_id}/manifest.json")
     assert response.status == 200
+
+
+has_follow_deps = all(
+    __import__("importlib").util.find_spec(name) for name in ("trackers", "PIL")
+)
+
+
+def test_frame_endpoint_returns_a_still(site, landscape_clip):
+    app, request, state, _ = site
+    upload(request, landscape_clip, "game.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    response, body = request("GET", f"/api/frame?asset={asset_id}&t=1.2")
+    assert response.status == 200
+    assert response.getheader("Content-Type") == "image/jpeg"
+    assert body[:2] == b"\xff\xd8"  # JPEG
+    response, _ = request("GET", "/api/frame?asset=0123456789abcdef&t=1")
+    assert response.status == 404
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_follow_a_player_end_to_end(site, landscape_clip):
+    app, request, state, _ = site
+    upload(request, landscape_clip, "game.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    # FixedDetector's first player is at (10, 10)-(30, 70) on the 320x180 frame.
+    tap = {"asset_id": asset_id, "number": "10", "name": "Emma", "t": 1.0,
+           "x": 20 / 320, "y": 40 / 180, "seconds": 2, "size": "small"}
+    response, body = request("POST", "/api/follow", tap)
+    assert response.status == 202, body
+    app.jobs.wait_idle()
+    current = state()
+    job = current["jobs"][0]
+    assert job["status"] == "done", job
+    assert job["message"].startswith("Found Emma  #10")
+    run = current["assets"][0]["runs"][0]
+    assert run["kind"] == "follow" and run["label"] == "Emma #10"
+    assert run["seen"] > 0.8
+    response, video = request("GET", run["video_url"])
+    assert response.status == 200 and len(video) > 1000
+    # Cached tracking isn't listed as a result.
+    assert all(r["kind"] != "tracks" for r in current["assets"][0]["runs"])
+
+    response, _ = request("POST", "/api/follow", {**tap, "number": "7", "name": ""})
+    assert response.status == 202
+    app.jobs.wait_idle()
+    job = state()["jobs"][0]
+    assert job["status"] == "done" and "reused earlier tracking" in job["message"]
+    assert state()["assets"][0]["runs"][0]["label"] == "#7"
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_follow_tap_on_nobody_fails_with_advice(site, landscape_clip):
+    app, request, state, _ = site
+    upload(request, landscape_clip, "game.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    request("POST", "/api/follow", {"asset_id": asset_id, "number": "3", "t": 1.0,
+                                    "x": 0.9, "y": 0.9, "seconds": 2})
+    app.jobs.wait_idle()
+    job = state()["jobs"][0]
+    assert job["status"] == "failed"
+    assert "No player was found where you tapped" in job["error"]
+    assert not any(r["kind"] == "follow" for r in state()["assets"][0]["runs"])
+
+
+@pytest.mark.parametrize("change, status", [
+    ({"number": "ten"}, 400),
+    ({"number": "1234"}, 400),
+    ({"x": 1.5}, 400),
+    ({"t": 90, "seconds": 60}, 400),
+    ({"size": "xlarge"}, 400),
+    ({"asset_id": "0123456789abcdef"}, 404),
+])
+def test_follow_rejects_bad_requests(site, landscape_clip, change, status):
+    app, request, state, _ = site
+    upload(request, landscape_clip, "game.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    body = {"asset_id": asset_id, "number": "10", "t": 1.0, "x": 0.5, "y": 0.5, **change}
+    response, _ = request("POST", "/api/follow", body)
+    assert response.status == status

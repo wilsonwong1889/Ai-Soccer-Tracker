@@ -146,3 +146,48 @@ def test_evaluate_with_bad_labels(tmp_path, capsys, fixed_detector):
     bad.write_text("{}")
     assert main(["evaluate", "--labels", str(bad), "--images", str(tmp_path)]) == 2
     assert "not a COCO labels file" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not __import__("importlib").util.find_spec("trackers"),
+                    reason="detect extra not installed")
+def test_track_then_follow_commands(tmp_path, capsys, monkeypatch):
+    from synthetic import OracleDetector, blocker_scene
+
+    scene = blocker_scene()
+    scene.duration = 6.0
+    video = tmp_path / "scene.mp4"
+    truth = scene.write(video)
+    library = tmp_path / "lib"
+    assert main(["ingest", str(video), "--library", str(library)]) == 0
+    asset_id = capsys.readouterr().out.split()[1]
+    made = []
+
+    def make(size="small", **kwargs):
+        made.append(size)
+        return OracleDetector(truth)
+
+    monkeypatch.setattr(cli, "make_detector", make)
+    assert main(["track", asset_id, "--library", str(library), "--fps", "15"]) == 0
+    out = capsys.readouterr().out
+    assert "tracked" in out and "tracks" in out
+    runs = library / asset_id / "runs"
+    tracks_run = next(runs.glob("tracks-*"))
+    assert (tracks_run / "tracks.mp4").is_file() and (tracks_run / "tracks.npz").is_file()
+
+    x1, y1, x2, y2 = scene.players[0].box(1.0)
+    point = f"{(x1 + x2) / 2 / 640:.4f},{(y1 + y2) / 2 / 360:.4f}"  # as fractions
+    assert main(["follow", asset_id, "--library", str(library), "--fps", "15",
+                 "--number", "10", "--name", "Emma", "--at", "1", "--point", point]) == 0
+    out = capsys.readouterr().out
+    assert "reused from" in out  # the tracking above was reused
+    follow_run = next(runs.glob("follow-n10-*"))
+    assert (follow_run / "followed.mp4").is_file()
+    assert "found" in out and "links       1" in out
+
+
+def test_follow_command_explains_a_missed_tap(tmp_path, capsys, monkeypatch, landscape_clip):
+    pytest.importorskip("trackers")
+    monkeypatch.setattr(cli, "make_detector", lambda size="small", **kw: FixedDetector())
+    assert main(["follow", str(landscape_clip), "--number", "4", "--at", "1",
+                 "--point", "300,170", "--fps", "15"]) == 2
+    assert "No player was found where you tapped" in capsys.readouterr().err

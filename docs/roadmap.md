@@ -43,6 +43,15 @@ metrics JSON.
 
 ## R3: Track across frames
 
+Status: built; scoring against labelled real clips is still to do.
+
+- [x] `track`: RF-DETR + ByteTrack (`trackers`, Apache-2.0) at 15 fps, plus a colour
+      description of each tracked box. Saves `tracks.npz`, `tracks.txt` (MOT format) and
+      `tracks.mp4` with ids. Reused by later follows with the same settings
+- [x] Splitting a track where the player's colours change abruptly (an id carried onto an
+      opponent)
+- [ ] Labelled clips + TrackEval scores (needs footage)
+
 - Roboflow `trackers` (BoT-SORT/ByteTrack), then gta-link offline stitching
 - Labeled clips: ≥ 3 × 60 s with identities kept consistent through the whole sequence,
   plus held-out SoccerTrack v2 matches as a secondary check
@@ -51,6 +60,19 @@ metrics JSON.
 
 ## R4: Select the child
 
+Status: built. Measured on synthetic games; real footage still to do.
+
+- [x] Website: name + jersey number, then tap the child on a still at any moment;
+      `follow` on the command line
+- [x] Following through hiding and crossings: reconnects pieces by position, size and
+      appearance, scores each link and flags close calls; fills gaps ≤ 3 s; smooths the
+      path
+- [x] `followed.mp4`: "Name #10" tag above the player and a ring at their feet, at the
+      video's frame rate; any script for names
+- [x] Synthetic results ([benchmarks.md](benchmarks.md)): 93–98% of visible frames on the
+      right player, no frames on another player except single frames at a clip's very end
+- [ ] Coverage on real labelled clips
+
 - Pause on a frame, click a player, and the selected track is saved, keyed by
   asset id. It survives a restart
 - Try SAM 2 + DAM4SAM to repair ambiguous stretches from that click
@@ -58,6 +80,12 @@ metrics JSON.
   the selected track is actually on them
 
 ## R5: Jersey OCR, re-ID, manual correction
+
+Status: started. The number is collected, shown and saved, and a simple
+colour re-ID is in place. Still to do: reading numbers (PARSeq weights are
+downloadable; to be built and tested on the Mac), so a player can be found
+from the number alone and same-kit teammates told apart, plus manual
+correction.
 
 - Approach: jersey *checking* (PARSeq, Koshkina-style pipeline reimplemented), re-ID
   retrained on our footage, per-game team clustering
