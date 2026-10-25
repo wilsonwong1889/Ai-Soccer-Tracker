@@ -44,13 +44,37 @@ sources are noted, and some are old.
    current pricing. The reward tiers are drafted in USD (risks F2).
 4. **No equity or financial returns**: already the plan (digital access only).
 
+## Positioning
+
+From [prior-art.md](prior-art.md#competitors):
+
+- **Don't claim "first".** Trace PlayerFocus has sold automatic per-child
+  highlights to parents since 2023. Veo and Hudl have per-player features on
+  their own cameras.
+- **Claims that are true and different:**
+  - one iPhone you already own, no camera to buy;
+  - no team sign-up needed;
+  - built for indoor small-sided games, where Veo's Player Spotlight doesn't
+    apply and Trace says it is weakest;
+  - your own downloads.
+- **Prove the claims with real footage.** XbotGo's marketing implied soccer
+  jersey tracking that its specs say is basketball-only, and reviews called
+  it out. Show tracking from kickoff to the final whistle, failures included.
+- **Frame rewards as prepaid founder plans with an hours cap**, not
+  "lifetime". The successful campaigns in this space sold hardware with "no
+  subscription". A subscription reward is a harder sell, and its compute cost
+  recurs.
+
 ## Draft points for the AI disclosure (G7)
 
 To be finished when R2 picks the detector. For now, these are facts to
 gather, not claims to make:
 
 - Which pretrained models are used, what data they were trained on, and
-  their licenses (risks L1/L2)
+  their licenses (risks L1/L2). Planned: RF-DETR (Apache-2.0, COCO-pretrained),
+  SoccerTrack v2 (CC BY 4.0, recorded with participants' consent according to
+  its authors), and our own permissioned footage. No SoccerNet or SportsMOT
+  data
 - Evaluation footage: recorded with written permission from every family
   whose child is identifiable, stored privately, deleted on request
 - Whether customer footage is ever used to improve models. Proposed: never,

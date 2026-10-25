@@ -16,6 +16,7 @@ delivers and how it's checked.
 | [docs/risks.md](docs/risks.md) | Technical, financial, privacy and licensing risks |
 | [docs/kickstarter-readiness.md](docs/kickstarter-readiness.md) | What has to be true before the campaign goes live |
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure, and the results so far |
+| [docs/prior-art.md](docs/prior-art.md) | Existing tools, datasets and competitors, licenses verified: the reuse plan for R2–R5 |
 
 ## Setup (macOS, Apple Silicon)
 

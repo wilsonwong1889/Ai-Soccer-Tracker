@@ -52,6 +52,8 @@ Not to be published before benchmarking and worst-case fulfilment modelling
 | T7 | **No footage in git, synthetic clips in tests** | Minors' privacy (brief §6). `.gitignore` blocks `data/` and video extensions | — |
 | T8 | **Manifests keep the file name, not the folder path** | Paths often contain names | R8 replaces local paths with object-storage keys |
 | T9 | **Project in `soccer-recorder/` of this repo, for now** | Only repository available to this session; Rojo ignores the folder | You create a dedicated repo (recommended before R2) |
+| T10 | **Proposed: only Apache-2.0/MIT/BSD code and weights go into the product.** Stack: RF-DETR (N/S/M/L), `trackers`, gta-link, SAM 2, PARSeq, ViTPose, torchreid ([prior-art.md](prior-art.md)) | Closed-source paid app. Rules out Ultralytics (AGPL), BoxMOT (AGPL), sn-gamestate (GPL), and non-commercial or PML weights | You choose to buy an Ultralytics Enterprise license |
+| T11 | **Proposed: no SoccerNet or SportsMOT data, and no checkpoints trained on them** | Research-only / non-commercial terms. Our own footage plus SoccerTrack v2 (CC BY 4.0) instead | Written permission from the dataset owners |
 
 ## Open questions
 
@@ -86,3 +88,8 @@ Raised during R1:
 - **Q-new-6: reward currency.** A campaign run from Canada is priced in CAD
   (see [kickstarter-readiness.md](kickstarter-readiness.md)), but the tiers
   are listed in USD.
+- **Q-new-7: positioning against Trace.** Trace PlayerFocus has offered
+  per-child highlights since 2023, at about $15–35/month with its own camera.
+  $9.99 is the lowest price found for this feature. The price stays as decided
+  unless you change it; [prior-art.md](prior-art.md#competitors) has the
+  comparison.

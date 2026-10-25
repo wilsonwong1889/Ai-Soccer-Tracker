@@ -21,7 +21,8 @@ can't be validated until real footage exists.
 Deliverable: `soccer-recorder detect <asset>` writes an annotated MP4 and a
 metrics JSON.
 
-- Detector chosen *after* the license check (risks L1), recorded in decisions.md
+- Start with RF-DETR (Apache-2.0 sizes only) and benchmark YOLOX against it
+  ([prior-art.md](prior-art.md#proposed-stack-for-r2r5)). No Ultralytics models
 - Labeled set: ≥ 200 frames sampled across ≥ 2 games, players and ball boxed
 - Reports precision and recall at IoU 0.5, for players and for the ball separately.
   *Proposed:* player recall ≥ 0.90, precision ≥ 0.85
@@ -30,20 +31,25 @@ metrics JSON.
 
 ## R3: Track across frames
 
-- Labeled clips: ≥ 3 × 60 s with identities kept consistent through the whole sequence
-- Reports IDF1, HOTA and ID switches per minute
+- Roboflow `trackers` (BoT-SORT/ByteTrack), then gta-link offline stitching
+- Labeled clips: ≥ 3 × 60 s with identities kept consistent through the whole sequence,
+  plus held-out SoccerTrack v2 matches as a secondary check
+- Reports IDF1, HOTA and ID switches per minute, scored with TrackEval
 - *Proposed:* IDF1 ≥ 0.70 as the baseline to improve on in R5
 
 ## R4: Select the child
 
 - Pause on a frame, click a player, and the selected track is saved, keyed by
   asset id. It survives a restart
+- Try SAM 2 + DAM4SAM to repair ambiguous stretches from that click
 - Reports **coverage**: the share of the time the child is on screen during which
   the selected track is actually on them
 
 ## R5: Jersey OCR, re-ID, manual correction
 
-- Jersey OCR accuracy on frames where a number is human-readable
+- Approach: jersey *checking* (PARSeq, Koshkina-style pipeline reimplemented), re-ID
+  retrained on our footage, per-game team clustering
+- Jersey check accuracy on frames where a number is human-readable
 - Re-ID recovers the selected player after an occlusion. Reports the % recovered and
   the median time to recover
 - Manual correction: reassign the selected identity from a given frame onward

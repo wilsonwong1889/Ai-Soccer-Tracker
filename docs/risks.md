@@ -62,13 +62,22 @@ Kickstarter and then unlocked in the app has to fit Apple's rules for content
 bought elsewhere. Confirm the current App Review Guidelines (section 3.1)
 before promising "redeem in the app".
 
+### F5. Competitors already sell per-child highlights
+
+Trace PlayerFocus has sold automatic per-child highlights to parents since
+2023, using its own camera at about $15–35/month. Veo and Hudl offer
+per-player features on their own cameras. The opening is narrower than "first
+to do this": one iPhone, no team sign-up, indoor 6v6, a low price. Veo
+already runs on iPhones (Veo Go) and could close the gap with a software
+update. See [prior-art.md](prior-art.md#competitors).
+
 ## Technical
 
 | # | Risk | Mitigation | When |
 | --- | --- | --- | --- |
-| T1 | **Identity switches when players cross or bunch up.** It's the core of "follow my child", and youth 6v6 is full of crowding | Measure ID switches on labeled clips (R3) before building on them. Combine jersey OCR and re-ID (R5). Manual correction is a feature, not a fallback | R3–R5 |
+| T1 | **Identity switches when players cross or bunch up.** It's the core of "follow my child", and youth 6v6 is full of crowding. Public benchmarks only score clips of up to 30 s, so nobody has published whole-game identity results to compare against | Measure ID switches on labeled clips (R3) before building on them. Stitch track fragments offline (gta-link). Combine jersey checks and re-ID (R5). Manual correction is a feature, not a fallback | R3–R5 |
 | T2 | **Players are small and far away** in a wide stationary shot, especially across a full pitch | Detection size is a benchmarked parameter (R1 defaults to 1280 px, not 640). Indoor 6v6 is the easier start | R2 |
-| T3 | **Jersey numbers are often unreadable**: motion blur, angle, low gym light | Treat OCR as a confidence signal, not ground truth (brief §4) | R5 |
+| T3 | **Jersey numbers are often unreadable**: motion blur, angle, low gym light. One study of wide shots reported only 30.6% number accuracy | Treat jersey reads as occasional confirmation, not ground truth (brief §4). The parent enters the number, so we only need to *check* it | R5 |
 | T4 | **HDR and variable frame rate** iPhone defaults | Detected and warned at ingest (R1). Analysis resamples to constant rate. HDR needs tone-mapping or a recording guide | R1 ✔, R2 |
 | T5 | **Processing speed on the M4 (16 GB)** may be too slow to iterate on full games | Proxies (R1). Benchmark MPS early. Rent a cloud GPU only when justified (ask first: it's a paid service) | R2 |
 | T6 | **Highlight detection quality** | Brief: no promises of action recognition before evaluation. Report candidates with confidence and manual review (R7) | R7 |
@@ -78,8 +87,8 @@ before promising "redeem in the app".
 
 | # | Risk | Mitigation |
 | --- | --- | --- |
-| L1 | **Ultralytics YOLO models and code are AGPL-3.0.** Using them in a paid, closed service generally means open-sourcing the service or buying an Ultralytics Enterprise license. Some popular tracker packages that wrap BoT-SORT also carry copyleft licenses | Decide before R2 which detector to build on. Permissively licensed options exist (e.g. Apache-2.0 detectors such as YOLOX or RT-DETR implementations). Check the license of the code *and* of the weights |
-| L2 | **Training data licenses**: COCO-pretrained weights, public sports datasets and Roboflow Universe datasets come with mixed or non-commercial terms | Record every dataset and weight file with its license in `docs/` as it's adopted (brief §4) |
+| L1 | **Copyleft and non-commercial code and weights.** Each of these was verified from its LICENSE file:<br>• Ultralytics YOLO: AGPL-3.0, including models trained with it<br>• BoxMOT: AGPL-3.0<br>• sn-gamestate: GPL-3.0<br>• Koshkina jersey pipeline (code and weights): non-commercial<br>• YOLO-NAS weights: non-commercial<br>• RF-DETR Atto/Femto/Pico/XL/2XL: PML 1.0<br>• PRTReID/BPBReID: Hippocratic License, with a privacy clause<br>• Deep-EIoU: no license | Build only on the Apache/MIT stack in [prior-art.md](prior-art.md#proposed-stack-for-r2r5). Reimplement good ideas from restricted repos rather than copying them. Ship the Apache NOTICE text |
+| L2 | **Training-data licenses carry into weights.**<br>• SoccerNet: research-only (reported)<br>• SportsMOT: CC BY-NC (reported)<br>• Roboflow football sets: Bundesliga frames<br>• Person re-ID sets with unclear terms (DukeMTMC was withdrawn)<br>"Sports-tuned" checkpoints trained on these inherit the problem even when their code is MIT | Fine-tune from general (COCO/ImageNet) weights on our own footage plus SoccerTrack v2 (CC BY 4.0, verified). Keep a register of every dataset and weight file with its license (brief §4), which doubles as the Kickstarter AI disclosure |
 | L3 | **Kickstarter's AI policy**: projects that develop AI must disclose their data sources and how consent is handled, and projects without consent safeguards are unlikely to be allowed | See [kickstarter-readiness.md](kickstarter-readiness.md). The data register from L2 doubles as the disclosure |
 
 ## Privacy and safety
