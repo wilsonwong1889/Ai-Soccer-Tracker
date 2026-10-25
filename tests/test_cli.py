@@ -191,3 +191,38 @@ def test_follow_command_explains_a_missed_tap(tmp_path, capsys, monkeypatch, lan
     assert main(["follow", str(landscape_clip), "--number", "4", "--at", "1",
                  "--point", "300,170", "--fps", "15"]) == 2
     assert "No player was found where you tapped" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not __import__("importlib").util.find_spec("trackers"),
+                    reason="detect extra not installed")
+def test_follow_then_analyze_with_marked_goals(tmp_path, capsys, monkeypatch):
+    from synthetic import OracleDetector, match_audio, match_scene, with_audio
+
+    scene = match_scene()
+    truth = scene.write(tmp_path / "silent.mp4")
+    match_audio(tmp_path / "sound.wav", scene.duration)
+    video = with_audio(tmp_path / "silent.mp4", tmp_path / "sound.wav", tmp_path / "match.mp4")
+    library = tmp_path / "lib"
+    assert main(["ingest", str(video), "--library", str(library)]) == 0
+    asset_id = capsys.readouterr().out.split()[1]
+    monkeypatch.setattr(cli, "make_detector", lambda size="small", **kw: OracleDetector(truth))
+    x1, y1, x2, y2 = scene.players[0].box(0.5)
+    assert main(["follow", asset_id, "--library", str(library), "--number", "10",
+                 "--at", "0.5", "--point", f"{(x1 + x2) / 2},{(y1 + y2) / 2}",
+                 "--height-cm", "140"]) == 0
+    out = capsys.readouterr().out
+    assert "passes      1/1 completed, 1 received; 0 shots" in out  # no goals marked yet
+    assert "Mark the goals" in out
+
+    width, height = scene.size
+    goals = ";".join(",".join(f"{v:.4f}" for v in (g[0] / width, g[1] / height,
+                                                     g[2] / width, g[3] / height))
+                     for g in scene.goals)
+    assert main(["analyze", asset_id, "--library", str(library), "--goals", goals]) == 0
+    out = capsys.readouterr().out
+    assert "1 shots" in out
+    assert "goal        at 6.9 s (95%: ball in the goal, cheering, whistle)" in out
+    assert (library / asset_id / "goals.json").is_file()
+
+    assert main(["analyze", asset_id, "--library", str(library), "--goals", "0.1,0.1,0.1"]) == 2
+    assert "four fractions of the frame" in capsys.readouterr().err

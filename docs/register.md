@@ -45,6 +45,12 @@ listed in `tests/test_licenses.py` with their reasons.
 | opencv-python | Apache-2.0 | Required by `trackers`. Its wheels bundle FFmpeg and Qt as shared LGPL libraries: fine to use as installed; don't modify and redistribute those libraries |
 | pillow | MIT-CMU | Draws the name tags |
 
+## Our own analysis code
+
+Ball path, team split, possession, passes, dribbles, shots, goals, cheering
+and whistle detection are our own code (numpy and FFmpeg only). They add no
+models, weights or datasets to this register.
+
 ## Fonts
 
 Name tags use a font already on the computer that has every letter of the

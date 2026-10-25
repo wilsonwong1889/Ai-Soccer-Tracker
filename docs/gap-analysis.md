@@ -30,8 +30,9 @@ for the recorder lives in `soccer-recorder/`, which Rojo doesn't sync.
 | Permissioned 5–10 min iPhone footage (§7) | Real test footage | **Missing**: needs you; blocks R2 |
 | Detection (§4, R2) | YOLO-style detection | **Built** with RF-DETR (Apache-2.0): `detect`, `benchmark`, `evaluate`. Accuracy unmeasured until real footage is labelled |
 | Tracking and selection (§4, R3–R4) | BoT-SORT tracking; parent selects child | **Built:** ByteTrack (`trackers`), tap-to-select with name and number, following through hiding and crossings, "Name #10" overlay. Measured on synthetic games only |
-| Jersey OCR, re-ID (§4, R5) | Number recognition, re-ID | Started: number shown/saved, simple colour re-ID. Number reading not built |
-| Editing and export (§4, R6–R7) | Crops, highlights, FFmpeg | Missing; FFmpeg already a dependency |
+| Jersey OCR, re-ID (§4, R5) | Number recognition, re-ID | Started: number shown/saved, simple colour re-ID, two-team split. Number reading not built |
+| Highlights / events (§4, R7) | Candidate events, confidence, manual review | **Built** as transparent rules: passes, dribbles, shots, goals (ball in a marked goal + cheering + whistle), with ✓/✗ review on the website. Precision on real games unmeasured |
+| Editing and export (§4, R6) | Auto-framed crops, highlight reels | Missing. The overlay video exists; crops and reels are next |
 | Backend (§4, R8) | FastAPI, queue, object storage, Postgres/Supabase | Missing |
 | Billing and entitlements (§6) | 600-min reserve/settle/release ledger | Missing; asset ids from R1 give the idempotency key it needs |
 | Kickstarter (§3, §6) | Pledge import, redemption tokens, Founder IDs | Missing; reward economics are unvalidated (see risks) |

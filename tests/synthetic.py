@@ -62,6 +62,9 @@ def draw_player(image: np.ndarray, player: Player, t: float, mask: np.ndarray, v
             mask[ya:yb, xa:xb] = value
 
 
+BALL_KEY = "__ball__"
+
+
 @dataclass
 class Scene:
     players: list[Player]
@@ -69,6 +72,8 @@ class Scene:
     size: tuple[int, int] = (640, 360)
     fps: float = 15.0
     duration: float = 8.0
+    ball: Callable[[float], tuple[float, float] | None] | None = None  # t -> centre
+    goals: tuple[tuple[int, int, int, int], ...] = ()  # drawn as white frames
 
     @property
     def times(self) -> np.ndarray:
@@ -85,6 +90,15 @@ class Scene:
         order = sorted(range(len(self.players)), key=lambda i: self.players[i].path(t)[1])
         for i in order:
             draw_player(image, self.players[i], t, mask, i + 1)
+        for x1, y1, x2, y2 in self.goals:
+            image[y1:y1 + 2, x1:x2] = WHITE
+            image[y2 - 2:y2, x1:x2] = WHITE
+            image[y1:y2, x1:x1 + 2] = WHITE
+            image[y1:y2, x2 - 2:x2] = WHITE
+        if self.ball and (centre := self.ball(t)) is not None:
+            bx, by = (int(round(v)) for v in centre)
+            image[max(0, by - 4):by + 4, max(0, bx - 4):bx + 4] = WHITE
+            image[max(0, by - 1):by + 1, max(0, bx - 4):bx + 4] = BLACK  # a seam
         if self.blocker:
             x1, y1, x2, y2 = self.blocker
             image[y1:y2, x1:x2] = GREY
@@ -99,8 +113,13 @@ class Scene:
         return image, visible
 
     def write(self, path) -> dict[str, list]:
-        """Write the video; returns each player's true box per frame (None when hidden)."""
+        """Write the video; returns each player's true box per frame (None when hidden).
+
+        With a ball, truth[BALL_KEY] holds its box per frame (None when off the pitch).
+        """
         truth = {p.name: [] for p in self.players}
+        if self.ball:
+            truth[BALL_KEY] = []
         width, height = self.size
         with VideoWriter(path, width, height, self.fps) as writer:
             for t in self.times:
@@ -109,6 +128,10 @@ class Scene:
                 for player in self.players:
                     truth[player.name].append(
                         player.box(float(t)) if visible[player.name] >= 0.4 else None)
+                if self.ball:
+                    centre = self.ball(float(t))
+                    truth[BALL_KEY].append(None if centre is None else (
+                        centre[0] - 4, centre[1] - 4, centre[0] + 4, centre[1] + 4))
         return truth
 
 
@@ -119,10 +142,12 @@ class OracleDetector:
 
     def __init__(self, truth: dict[str, list], jitter: float = 1.0, miss_rate: float = 0.0,
                  seed: int = 1, step: int = 1):
+        people = {k: v for k, v in truth.items() if k != BALL_KEY}
         self.frames = [
-            [box for boxes in truth.values() if (box := boxes[i]) is not None]
-            for i in range(len(next(iter(truth.values()))))
+            [box for boxes in people.values() if (box := boxes[i]) is not None]
+            for i in range(len(next(iter(people.values()))))
         ][::step]
+        self.balls = truth.get(BALL_KEY, [])[::step]
         self.calls = 0
         self.rng = np.random.default_rng(seed)
         self.jitter = jitter
@@ -134,8 +159,13 @@ class OracleDetector:
         if self.miss_rate:
             boxes = [b for b in boxes if self.rng.random() >= self.miss_rate]
         noise = self.rng.normal(0, self.jitter, (len(boxes), 4))
-        return [Box(x1 + n[0], y1 + n[1], x2 + n[2], y2 + n[3], 0.9, "person")
-                for (x1, y1, x2, y2), n in zip(boxes, noise, strict=True)]
+        found = [Box(x1 + n[0], y1 + n[1], x2 + n[2], y2 + n[3], 0.9, "person")
+                 for (x1, y1, x2, y2), n in zip(boxes, noise, strict=True)]
+        index = self.calls - 1
+        if self.balls and index < len(self.balls) and (ball := self.balls[index]) is not None:
+            if not self.miss_rate or self.rng.random() >= self.miss_rate:
+                found.append(Box(*ball, 0.7, "sports ball"))
+        return found
 
     def describe(self):
         return {"name": self.name, "device": "cpu"}
@@ -177,3 +207,89 @@ def crossing_scene() -> Scene:
             Player("teammate", RED, WHITE, RED, BLOND, lambda t: (870 - 70 * t, 248)),
         ],
     )
+
+
+def _lerp(t: float, t0: float, t1: float, a: tuple, b: tuple) -> tuple[float, float]:
+    w = min(1.0, max(0.0, (t - t0) / (t1 - t0)))
+    return (a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w)
+
+
+def match_scene() -> Scene:
+    """A scripted attack with a known answer.
+
+    0.0-2.0 s  the target dribbles right (130 px, over 2 body heights)
+    2.0-2.6 s  passes to the teammate
+    2.6-4.0 s  the teammate has the ball
+    4.0-4.6 s  passes back to the target
+    4.6-6.5 s  the target dribbles towards the right goal
+    6.5-6.9 s  shoots: the ball flies into the right goal and stays there
+    7.2 s      the crowd cheers (see match_audio); 8.5 s: the whistle
+    """
+    def target_path(t):
+        if t < 2.0:
+            return (100 + 65 * t, 260)
+        if t < 4.6:
+            return (230 + 30 * (t - 2.0) / 2.6, 260)  # drifts to x = 260
+        if t < 6.5:
+            return (260 + 100 * (t - 4.6), 260)  # to x = 450
+        return (450 + 20 * (t - 6.5), 260)
+
+    teammate = lambda t: (330 + 5 * t, 232)  # noqa: E731
+
+    def ball(t):
+        tx, ty = target_path(t)
+        mx, my = teammate(t)
+        if t < 2.0:
+            return (tx + 12, ty - 6)
+        if t < 2.6:
+            return _lerp(t, 2.0, 2.6, (target_path(2.0)[0] + 12, 254), (teammate(2.6)[0] + 10, 226))
+        if t < 4.0:
+            return (mx + 10, my - 6)
+        if t < 4.6:
+            return _lerp(t, 4.0, 4.6, (teammate(4.0)[0] + 10, 226), (target_path(4.6)[0] + 12, 254))
+        if t < 6.5:
+            return (tx + 12, ty - 6)
+        if t < 6.9:
+            return _lerp(t, 6.5, 6.9, (target_path(6.5)[0] + 12, 254), (622, 205))
+        return (622 + 2 * np.sin(t * 3), 205)  # resting in the net
+
+    return Scene(
+        players=[
+            Player("target", RED, WHITE, RED, DARK_HAIR, target_path),
+            Player("teammate", RED, WHITE, RED, BLOND, teammate),
+            Player("opponent", BLUE, BLACK, BLUE, DARK_HAIR, lambda t: (520 - 10 * t, 300)),
+            Player("keeper", BLUE, BLACK, BLUE, BLOND, lambda t: (585, 240 + 10 * np.sin(t))),
+        ],
+        duration=10.0,
+        ball=ball,
+        goals=((0, 150, 30, 262), (608, 150, 640, 262)),
+    )
+
+
+def match_audio(path, duration: float, cheer=(7.2, 10.0), whistle=(8.5, 9.1),
+                rate: int = 16000):
+    """Write a WAV: crowd murmur, a cheer and a referee's whistle."""
+    import wave
+
+    rng = np.random.default_rng(0)
+    t = np.arange(int(rate * duration)) / rate
+    audio = rng.normal(0, 0.01, len(t))
+    loud = (t >= cheer[0]) & (t < cheer[1])
+    audio[loud] += rng.normal(0, 0.12, loud.sum())
+    blow = (t >= whistle[0]) & (t < whistle[1])
+    audio[blow] += 0.2 * np.sin(2 * np.pi * 3200 * t[blow])
+    pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(pcm.tobytes())
+
+
+def with_audio(video, wav, out):
+    import subprocess
+
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-i", str(wav),
+                    "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+                    "-shortest", str(out)], check=True)
+    return out

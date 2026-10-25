@@ -4,12 +4,20 @@ An iPhone-first soccer recorder for parents: record the whole game from a
 tripod, pick your child, get player-focused tracking and highlights. This
 folder is the proof of concept, which works on pre-recorded footage.
 
-**Status: Releases 3 and 4 of 10** (tracking, and following one player).
-Tell it the player's name and jersey number and tap them once. It follows
-them through the game and draws a "Name #10" tag above them. Checked so far on
-synthetic games and a real two-person clip. Accuracy on real youth footage is
-still to be measured. See [the roadmap](docs/roadmap.md) for what each
-release delivers and how it's checked.
+**Status: about halfway** (R1–R4 built, R5 and R7 started).
+Tell it the player's name and jersey number and tap them once. It:
+
+- follows them through the game, with a "Name #10" tag above them;
+- works out their analytics: time on the ball, touches, passes, dribbles,
+  shots, distance, speed and a heatmap;
+- flags goals from the ball going into a marked goal, the crowd cheering and
+  the referee's whistle.
+
+Every event is an automatic guess with a confidence, which you can tick or
+cross. Checked so far on synthetic games and a real two-person clip;
+accuracy on real youth footage is still to be measured. See
+[the roadmap](docs/roadmap.md) for what each release delivers and how it's
+checked.
 
 | Doc | What's in it |
 | --- | --- |
@@ -72,6 +80,18 @@ uv run soccer-recorder serve    # opens http://127.0.0.1:8765 in your browser
 - **Watch** any result, or play the original. *numbers* opens the run's
   metrics: how much of the time the player was found, and how many times the
   follower had to reconnect them.
+- **Analytics** opens the player's page:
+  - **Stat cards:** on the ball, passes, dribbles, shots and goals, distance,
+    top speed and sprints, how much their team had the ball, and how often
+    the ball was found.
+  - **A timeline** with crowd noise, time on the ball, passes, dribbles,
+    shots, goals and whistles. Click it to watch that moment.
+  - **A heatmap** of where they played.
+  - **Moments:** a list of events, each with ▶ to watch and ✓/✗ to say
+    whether it really happened.
+  - **Mark goals:** drag a box over each goal mouth once per video, so
+    "ball in the goal" can be detected. The stats are then re-worked in
+    seconds.
 
 It's a tool for you on your Mac, not the product's upload service (that's
 R8). It only answers on this computer: it listens on 127.0.0.1 and ignores
@@ -220,6 +240,51 @@ What it can't do yet: tell apart two teammates in the same kit who disappear
 together and come out in the same place. Reading the jersey number from the
 video (R5) is what will fix that. Until then, the number is shown in the tag
 and saved with the run.
+
+## Analytics and events (R5, R7)
+
+`follow` works out the analytics automatically. `analyze` re-works them, for
+example after marking the goals:
+
+```sh
+uv run soccer-recorder analyze <asset id> --goals 0,0.42,0.05,0.72;0.95,0.42,1,0.72 --height-cm 135
+```
+
+How each piece works. All of it is rules over positions and sound, with no
+new models or downloads:
+
+- **Ball:** RF-DETR's ball detections, keeping the one that's ball-sized and
+  reachable from where the ball just was. Gaps up to 0.5 s are filled.
+- **Teams:** players' shirt colours split into two groups. Anyone far from
+  both groups (a referee) is "other".
+- **On the ball:** the ball within 0.6 body heights of a player's feet. The
+  nearest player has it.
+- **Passes:** the ball goes from one player to another, at least ~2 m away,
+  within 3 s. A teammate receiving it is a *completed* pass; an opponent is
+  a *lost* pass. The reverse direction gives *received* and *won the ball*.
+- **Dribbles:** at least 1 s on the ball while covering ~2 m.
+- **Shots:** the ball leaves your child quickly, heading for a marked goal.
+- **Goals:** the ball seen inside a marked goal (55%), plus cheering within
+  10 s (+30%), plus a whistle within 20 s (+10%). Cheering alone, loud and
+  long, is only a *possible* goal (25–50%): near misses get cheered too.
+- **Sound:**
+  - *Cheering* is at least 8 dB above the game's running background level
+    for a second.
+  - A *whistle* is a strong single tone at 2–5 kHz.
+- **Distance and speed** are measured in the player's own body heights (which
+  roughly cancels perspective), converted with their height (140 cm unless
+  you give it). Treat them as estimates.
+
+These rules haven't been measured on real games yet. Your ✓/✗ reviews are
+saved in `reviews.json` next to each run and are how they'll be measured.
+Known weak spots:
+
+- an indoor hall with several courts has cheering and whistles from the
+  other games;
+- the ball is small and often hidden in a wide shot (the *Ball seen* card
+  shows how often it was found);
+- teammates in the same kit can only be told apart by position until jersey
+  numbers are read.
 
 ## Tests
 

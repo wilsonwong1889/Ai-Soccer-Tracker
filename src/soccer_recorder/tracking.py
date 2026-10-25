@@ -6,7 +6,8 @@ tracked box gets an appearance description (appearance.py). Everything is
 saved, so following a different player later doesn't need detection again:
 
     tracks.npz     frame index, time, track id, box (source pixels), score,
-                   appearance, one row per tracked box
+                   appearance, one row per tracked box; and every ball
+                   detection (frame, box, score), for the analytics
     tracks.txt     the same tracks in MOT format, for scoring with TrackEval
     metrics.json   speed and track counts
 """
@@ -24,10 +25,11 @@ import numpy as np
 
 from . import __version__
 from .appearance import FEATURE_SIZE, describe, mean_feature, similarity
-from .detect import PERSON, Detector, Progress
+from .detect import BALL, PERSON, Detector, Progress
 from .frames import DEFAULT_MAX_SIDE, iter_frames
 from .media import VideoInfo, probe
 
+TRACKS_VERSION = 2  # 2: ball detections added
 DEFAULT_TRACK_FPS = 15.0
 # Seconds a lost track is kept alive for ByteTrack to pick it up again.
 LOST_BUFFER_S = 1.0
@@ -46,22 +48,33 @@ class Tracks:
     scores: np.ndarray  # (n,)
     features: np.ndarray  # (n, FEATURE_SIZE); NaN rows where too small to describe
     size: tuple[int, int] = (0, 0)  # source display width, height
+    # Every ball detection (not tracked; see ball.py), in source pixels.
+    ball_frame: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=int))
+    ball_boxes: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
+    ball_scores: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    version: int = TRACKS_VERSION
 
     def save(self, path: Path) -> None:
         np.savez_compressed(
             path, fps=self.fps, start_s=self.start_s, times=self.times, frame=self.frame,
             track=self.track, boxes=self.boxes, scores=self.scores, features=self.features,
-            size=np.array(self.size),
+            size=np.array(self.size), ball_frame=self.ball_frame, ball_boxes=self.ball_boxes,
+            ball_scores=self.ball_scores, version=self.version,
         )
 
     @classmethod
     def load(cls, path: Path) -> Tracks:
         data = np.load(path)
+        extra = {}
+        if "ball_frame" in data:
+            extra = dict(ball_frame=data["ball_frame"], ball_boxes=data["ball_boxes"],
+                         ball_scores=data["ball_scores"])
         return cls(
             fps=float(data["fps"]), start_s=float(data["start_s"]), times=data["times"],
             frame=data["frame"], track=data["track"], boxes=data["boxes"],
             scores=data["scores"], features=data["features"],
             size=tuple(int(v) for v in data["size"]),
+            version=int(data["version"]) if "version" in data else 1, **extra,
         )
 
     def feature(self, row: int) -> np.ndarray | None:
@@ -184,6 +197,7 @@ def run_tracking(
     )
 
     times, frame_ix, track_ids, boxes, scores, features = [], [], [], [], [], []
+    ball_frame, ball_boxes, ball_scores = [], [], []
     started = time.perf_counter()
     frame_size = None
     for frame in iter_frames(video, max_side=max_side, fps=rate, start_s=start_s,
@@ -191,7 +205,8 @@ def run_tracking(
         image = frame.image
         height, width = image.shape[:2]
         frame_size = (width, height)
-        people = [b for b in detector.detect(image) if b.label == PERSON]
+        found = detector.detect(image)
+        people = [b for b in found if b.label == PERSON]
         detections = Detections(
             xyxy=np.array([[b.x1, b.y1, b.x2, b.y2] for b in people], dtype=float).reshape(-1, 4),
             confidence=np.array([b.score for b in people], dtype=float),
@@ -200,6 +215,10 @@ def run_tracking(
         tracked = tracker.update(detections)
         sx, sy = info.display_width / width, info.display_height / height
         times.append(frame.time_s)
+        for ball in (b for b in found if b.label == BALL):
+            ball_frame.append(frame.index)
+            ball_boxes.append([ball.x1 * sx, ball.y1 * sy, ball.x2 * sx, ball.y2 * sy])
+            ball_scores.append(ball.score)
         for xyxy, score, track_id in zip(tracked.xyxy, tracked.confidence, tracked.tracker_id,
                                          strict=True):
             if track_id < 0:
@@ -223,6 +242,9 @@ def run_tracking(
         scores=np.array(scores, dtype=float),
         features=np.array(features, dtype=np.float32).reshape(-1, FEATURE_SIZE),
         size=(info.display_width, info.display_height),
+        ball_frame=np.array(ball_frame, dtype=int),
+        ball_boxes=np.array(ball_boxes, dtype=float).reshape(-1, 4),
+        ball_scores=np.array(ball_scores, dtype=float),
     )
     result.save(out_dir / "tracks.npz")
     write_mot(result, out_dir / "tracks.txt")
@@ -244,6 +266,8 @@ def run_tracking(
             "median_length_s": round(float(np.median(lengths)), 2) if lengths else None,
             "per_frame": round(len(track_ids) / len(times), 2) if times else 0.0,
         },
+        "ball": {"detections": len(ball_frame),
+                 "frames_with_ball": round(len(set(ball_frame)) / len(times), 3) if times else 0.0},
         "speed": {"wall_s": round(wall_s, 2),
                   "realtime_factor": round(wall_s / window_s, 3) if window_s else None},
     }
@@ -271,7 +295,10 @@ def load_or_track(video: str | Path, runs_base: Path, detector: Detector, *,
     """
     folder = tracks_dir(runs_base, detector.name, fps, start_s, duration_s)
     if not fresh and (folder / "tracks.npz").is_file() and (folder / "metrics.json").is_file():
-        return Tracks.load(folder / "tracks.npz"), folder, True
+        tracks = Tracks.load(folder / "tracks.npz")
+        if tracks.version >= TRACKS_VERSION:
+            return tracks, folder, True
+        # Older runs lack what the analytics need (the ball): track again.
     tracks = run_tracking(video, detector, folder, fps=fps, max_side=max_side, start_s=start_s,
                           duration_s=duration_s, on_progress=on_progress)
     return tracks, folder, False

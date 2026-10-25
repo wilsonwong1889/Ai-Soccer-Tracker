@@ -4,6 +4,17 @@ The ten releases from the brief, each with a check you can run. Targets marked
 *proposed* are starting points to agree on before the release begins. They
 can't be validated until real footage exists.
 
+**Where we are (2026-10-25): about halfway.**
+
+- R1–R4 are built. R5 and R7 are started: analytics, and candidate events with
+  confidence and review.
+- Everything works end to end on synthetic games and short real clips.
+- The open checks all need real, permissioned youth footage:
+  - the speed of each step on the M4;
+  - detection accuracy;
+  - how long the follower stays on the right child;
+  - how often the events are right.
+
 ## R1: Repo, environment, ingestion ✔ (pending a Mac run)
 
 - [x] `uv sync` builds the environment from `uv.lock`; `soccer-recorder doctor` passes
@@ -81,8 +92,12 @@ Status: built. Measured on synthetic games; real footage still to do.
 
 ## R5: Jersey OCR, re-ID, manual correction
 
-Status: started. The number is collected, shown and saved, and a simple
-colour re-ID is in place. Still to do: reading numbers (PARSeq weights are
+Status: started.
+
+- The number is collected, shown and saved.
+- A simple colour re-ID and a two-team split by shirt colour are in place.
+- Analytics (on/off the ball, distance, speed, sprints, heatmap) are built
+  (see R7). Still to do: reading numbers (PARSeq weights are
 downloadable; to be built and tested on the Mac), so a player can be found
 from the number alone and same-kit teammates told apart, plus manual
 correction.
@@ -103,6 +118,25 @@ correction.
 - Reports export speed
 
 ## R7: Candidate highlights
+
+Status: candidate events, confidences and review are built; precision on real
+games is still to be measured.
+
+- [x] Events for the followed player:
+  - on the ball (touches);
+  - passes completed, lost and received; ball won;
+  - dribbles and shots;
+  - ball in a marked goal.
+- [x] Goals from combined evidence (ball in goal, cheering, whistle). Cheering
+      alone is a *possible* goal.
+- [x] Sound: cheering against a rolling background, and referee whistles (2–5 kHz tone).
+- [x] Website: stat cards, a clickable timeline, a heatmap, and moments with
+      ▶ / ✓ / ✗. Reviews are saved per run (`reviews.json`) and survive
+      re-analysis.
+- [x] Synthetic match ([benchmarks.md](benchmarks.md)): every scripted event found
+      within 0.5 s, the goal at 95% credited to the followed player, also with 15%
+      of detections missed
+- [ ] Precision per event type from parents' reviews on real games
 
 - Candidates come with a confidence and a reason; the user accepts or rejects each
 - Reports precision of the top 10 candidates against human-marked moments

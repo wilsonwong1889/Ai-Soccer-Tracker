@@ -69,6 +69,33 @@ anyone else, with 3 px noise and 10% missing.
 On real footage (to do, M4): `uv run soccer-recorder follow …` on a labelled
 clip, compared with the labelled identity.
 
+## R7: events on a synthetic match
+
+`tests/synthetic.py: match_scene` scripts this sequence:
+
+1. the followed player dribbles (0–2 s);
+2. passes to a teammate in the same kit (2 s);
+3. gets it back (4.3 s);
+4. dribbles again;
+5. shoots into the right goal (6.5 s);
+6. the ball rests in the net (from 6.9 s);
+7. the crowd cheers (7.2 s) and the whistle blows (8.5 s, 3.2 kHz).
+
+There are two opponents. Detections are the true boxes with 2 px noise.
+Run 2026-10-25.
+
+| Detections missed | Found (time) | Wrong events | Goal |
+| --- | --- | --- | --- |
+| none | dribble 0.07, pass 2.07, received 4.27, dribble 4.47, shot 6.53, ball in goal 6.87, cheer 7.17, whistle 8.48 | none | 95% (ball + cheering + whistle), by the followed player |
+| 15% (players and ball) | the same, within 0.1 s | none | 95%, by the followed player. Event confidences drop to 0.76–0.89 as the ball is seen 83% of the time |
+| goals not marked | the same, minus shot and ball in goal | none | *possible goal* 50% (cheering + whistle) |
+| no sound track | the same, minus cheer and whistle | none | 55% (ball in the goal only) |
+
+Stats in the clean run: 2 touches, 2 dribbles, 1/1 passes, 1 received,
+1 shot, top speed 8.3 km/h (scripted 100 px/s with a 60 px player = 8.4
+km/h). Sound alone, on a 20 s test: cheer found at 7.97–11.01 s (true
+8–11), whistle at 13.95–14.59 s and 3203 Hz (true 14–14.6 s, 3200 Hz).
+
 ## R2 onward: what to measure
 
 These feed the reward economics in [risks.md](risks.md#financial). Each one is

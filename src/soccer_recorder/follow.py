@@ -298,6 +298,7 @@ def follow_player(
     render: bool = True,
     max_side: int | None = None,
     on_progress: Callable[[Progress], None] | None = None,
+    tracks_run: str | None = None,
 ) -> dict:
     """Follow the tapped player and write target.json, followed.mp4 and metrics.json."""
     from .media import probe
@@ -313,6 +314,7 @@ def follow_player(
     (out_dir / "target.json").write_text(json.dumps({
         "target": asdict(target),
         "seed": asdict(seed),
+        "tracks_run": tracks_run,
         "fps": tracks.fps,
         "links": [asdict(link) for link in trajectory.links],
         "frames": [
@@ -334,6 +336,7 @@ def follow_player(
         "tool_version": __version__,
         "target": asdict(target),
         "seed": asdict(seed),
+        "tracks_run": tracks_run,
         "source": {"filename": info.filename, "duration_s": round(info.duration_s, 3)},
         "window": {"start_s": round(float(trajectory.times[0]), 3) if n else 0.0,
                    "seconds": round(float(trajectory.times[-1] - trajectory.times[0]), 3)

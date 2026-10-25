@@ -21,7 +21,8 @@ class SlowDetector(FixedDetector):
 def site(tmp_path):
     detectors = {"fixed": FixedDetector, "slow": SlowDetector}
     choice = {"kind": "fixed"}
-    app = App(tmp_path / "library", detector_factory=lambda size: detectors[choice["kind"]]())
+    app = App(tmp_path / "library", detector_factory=lambda size: (
+        choice["make"]() if "make" in choice else detectors[choice["kind"]]()))
     server = make_server(app, port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -285,3 +286,61 @@ def test_follow_rejects_bad_requests(site, landscape_clip, change, status):
     body = {"asset_id": asset_id, "number": "10", "t": 1.0, "x": 0.5, "y": 0.5, **change}
     response, _ = request("POST", "/api/follow", body)
     assert response.status == status
+
+
+
+@pytest.mark.skipif(not has_follow_deps, reason="detect extra not installed")
+def test_analytics_reviews_and_marking_goals(site, tmp_path):
+    from synthetic import OracleDetector, match_audio, match_scene, with_audio
+
+    app, request, state, choice = site
+    scene = match_scene()
+    truth = scene.write(tmp_path / "silent.mp4")
+    match_audio(tmp_path / "sound.wav", scene.duration)
+    video = with_audio(tmp_path / "silent.mp4", tmp_path / "sound.wav", tmp_path / "match.mp4")
+    choice["make"] = lambda: OracleDetector(truth)
+    upload(request, video, "match.mp4")
+    app.jobs.wait_idle()
+    asset_id = state()["assets"][0]["asset_id"]
+    x1, y1, x2, y2 = scene.players[0].box(0.5)
+    width, height = scene.size
+    response, body = request("POST", "/api/follow", {
+        "asset_id": asset_id, "number": "10", "name": "Emma", "t": 0.5,
+        "x": (x1 + x2) / 2 / width, "y": (y1 + y2) / 2 / height, "height_cm": 140})
+    assert response.status == 202, body
+    app.jobs.wait_idle()
+    run = state()["assets"][0]["runs"][0]
+    assert run["kind"] == "follow" and run["stats"]["passes_completed"] == 1
+    assert run["stats"]["goals"] == 0  # goals not marked yet
+
+    response, body = request("GET", f"/api/analytics?asset={asset_id}&run={run['name']}")
+    assert response.status == 200
+    data = json.loads(body)
+    kinds = [e["type"] for e in data["events"]]
+    assert "possible_goal" in kinds and "goal" not in kinds
+    assert data["video_url"].endswith("followed.mp4") and data["settings"]["player_height_m"] == 1.4
+
+    dribble = next(e for e in data["events"] if e["type"] == "dribble")
+    response, body = request("POST", "/api/review", {"asset_id": asset_id, "run": run["name"],
+                                                     "event": dribble["id"], "verdict": "yes"})
+    assert response.status == 200 and json.loads(body)["reviews"] == {dribble["id"]: "yes"}
+
+    goals = [[g[0] / width, g[1] / height, g[2] / width, g[3] / height] for g in scene.goals]
+    response, body = request("POST", "/api/goals", {"asset_id": asset_id, "goals": goals})
+    assert response.status == 202, body
+    app.jobs.wait_idle()
+    assert state()["jobs"][0]["status"] == "done"
+    data = json.loads(request("GET", f"/api/analytics?asset={asset_id}&run={run['name']}")[1])
+    goal = next(e for e in data["events"] if e["type"] == "goal")
+    assert goal["confidence"] >= 0.9 and goal["details"]["by_followed_player"]
+    assert data["reviews"] == {dribble["id"]: "yes"}  # reviews survive re-analysis
+    assert data["review_summary"]["dribble"]["confirmed"] == 1
+    assert state()["assets"][0]["runs"][0]["stats"]["goals"] == 1
+
+    response, _ = request("POST", "/api/goals", {"asset_id": asset_id, "goals": [[0, 0, 2, 2]]})
+    assert response.status == 400
+    response, _ = request("GET", f"/api/analytics?asset={asset_id}&run=follow-n1-20000101-000000")
+    assert response.status == 404
+    response, _ = request("POST", "/api/review", {"asset_id": asset_id, "run": run["name"],
+                                                  "event": "nope-1", "verdict": "yes"})
+    assert response.status == 404

@@ -29,6 +29,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .analytics import (
+    analyse,
+    analyse_run,
+    load_goals,
+    load_reviews,
+    review_summary,
+    save_goals,
+    save_review,
+)
 from .detect import Detector, Progress, run_detection
 from .follow import Seed, Target, follow_player
 from .library import Asset, ingest, list_assets, load_asset
@@ -51,7 +60,8 @@ CONTENT_TYPES = {
 }
 SIZES = ("nano", "small", "medium", "large")
 FRAME_MAX_SIDE = 960  # stills for tapping the player
-TRACK_SHARE = 0.85  # of a follow job's progress bar: tracking; the rest is drawing
+TRACK_SHARE = 0.8  # of a follow job's progress bar: tracking; then drawing and stats
+FOLLOW_RUN = re.compile(r"follow-n\d{1,3}-\d{8}-\d{6}")
 
 
 class Cancelled(Exception):
@@ -93,6 +103,8 @@ class Jobs:
         self._queues = {
             "ingest": ThreadPoolExecutor(1, thread_name_prefix="ingest"),
             "detect": ThreadPoolExecutor(1, thread_name_prefix="detect"),
+            # Re-working stats takes seconds: never queue it behind a long detection.
+            "analyse": ThreadPoolExecutor(1, thread_name_prefix="analyse"),
         }
 
     def submit(self, kind: str, title: str, work: Callable[[Job], dict | None],
@@ -171,8 +183,22 @@ def _run_summary(asset: Asset, run_dir: Path) -> dict | None:
         target = metrics.get("target", {})
         coverage = metrics.get("coverage", {})
         video = run_dir / "followed.mp4"
+        stats = None
+        try:
+            analytics = json.loads((run_dir / "analytics.json").read_text())
+            raw = analytics["stats"]
+            stats = {
+                "touches": raw["touches"], "on_ball_s": raw["on_ball_s"],
+                "passes_completed": raw["passes_completed"], "passes_made": raw["passes_made"],
+                "dribbles": raw["dribbles"], "shots": raw["shots"],
+                "goals": sum(e["type"] == "goal" and e["details"].get("by_followed_player")
+                             for e in analytics["events"]),
+            }
+        except (OSError, ValueError, KeyError):
+            pass
         return {
             "kind": "follow",
+            "stats": stats,
             "name": run_dir.name,
             "created_at": metrics.get("created_at"),
             "label": f"{target.get('name') or ''} #{target.get('number')}".strip(),
@@ -350,7 +376,7 @@ class App:
 
     def start_follow(self, asset_id: str, *, number: str, name: str = "", t: float,
                      x: float, y: float, size: str = "small",
-                     seconds: float | None = None) -> Job:
+                     seconds: float | None = None, height_cm: float | None = None) -> Job:
         """Track players, then follow the one tapped at (x, y) (fractions of the frame) at t."""
         number = str(number).strip()
         if not re.fullmatch(r"\d{1,3}", number):
@@ -365,6 +391,8 @@ class App:
         if seconds is not None and t > seconds:
             raise ValueError("the moment you tapped is after the part being analysed; "
                              "pick an earlier moment or analyse more")
+        if height_cm is not None and not 80 <= height_cm <= 220:
+            raise ValueError("height should be in centimetres, between 80 and 220")
         asset = self._asset(asset_id)
         target = Target(number=number, name=name)
         seed = Seed(t=float(t), x=x * asset.video.display_width,
@@ -391,7 +419,7 @@ class App:
                 return update
 
             job.message = "Finding players"
-            tracks, _, reused = load_or_track(
+            tracks, tracks_folder, reused = load_or_track(
                 asset.source_path, asset.directory / "runs", detector, duration_s=seconds,
                 on_progress=progress_from(0.0, TRACK_SHARE, "Finding players"),
             )
@@ -400,8 +428,13 @@ class App:
             try:
                 metrics = follow_player(
                     asset.source_path, tracks, seed, target, out,
-                    on_progress=progress_from(TRACK_SHARE, 1.0, f"Drawing {target.label}"),
+                    on_progress=progress_from(TRACK_SHARE, 0.97, f"Drawing {target.label}"),
+                    tracks_run=tracks_folder.name,
                 )
+                job.message = "Working out the stats"
+                analyse(asset.source_path, tracks, out,
+                        goals=load_goals(asset.directory, tracks.size),
+                        player_height_m=height_cm / 100 if height_cm else None)
             except BaseException:
                 shutil.rmtree(out, ignore_errors=True)
                 raise
@@ -413,6 +446,62 @@ class App:
         return self.jobs.submit(
             "detect", f"Follow {target.label} in {asset.original_filename} ({label}, {size})",
             work, asset_id=asset_id)
+
+    def _follow_run(self, asset_id: str, run: str) -> tuple[Asset, Path]:
+        asset = self._asset(asset_id)
+        folder = asset.directory / "runs" / str(run)
+        if not FOLLOW_RUN.fullmatch(str(run)) or not (folder / "target.json").is_file():
+            raise LookupError(f"no follow run {run!r} for this video")
+        return asset, folder
+
+    def analytics(self, asset_id: str, run: str) -> dict:
+        asset, folder = self._follow_run(asset_id, run)
+        path = folder / "analytics.json"
+        if not path.is_file():
+            raise LookupError("this run has no analytics yet: press Re-analyse")
+        data = json.loads(path.read_text())
+        reviews = load_reviews(folder)
+        base = f"/files/{asset.asset_id}/runs/{folder.name}"
+        video = folder / "followed.mp4"
+        return {
+            **data,
+            "reviews": reviews,
+            "review_summary": review_summary(data, reviews),
+            "video_url": f"{base}/followed.mp4" if video.is_file() else None,
+            "asset_id": asset.asset_id,
+            "run": folder.name,
+            "filename": asset.original_filename,
+        }
+
+    def review(self, asset_id: str, run: str, event_id: str, verdict: str | None) -> dict:
+        _, folder = self._follow_run(asset_id, run)
+        return save_review(folder, str(event_id), verdict)
+
+    def start_analyse(self, asset_id: str, run: str | None = None,
+                      goals: list | None = None) -> Job:
+        """Re-work stats for one follow run, or all of a video's runs (after marking goals)."""
+        asset = self._asset(asset_id)
+        if goals is not None:
+            save_goals(asset.directory, goals)
+        folders = ([self._follow_run(asset_id, run)[1]] if run else
+                   sorted(p for p in (asset.directory / "runs").glob("follow-*")
+                          if (p / "target.json").is_file()))
+        if not folders:
+            raise LookupError("follow a player in this video first")
+
+        def work(job: Job) -> dict:
+            for n, folder in enumerate(folders, start=1):
+                if job.cancel.is_set():
+                    raise Cancelled()
+                job.message = f"Re-working {n} of {len(folders)}"
+                job.progress = (n - 1) / len(folders)
+                analyse_run(asset.source_path, folder, goals_dir=asset.directory)
+            job.message = "Stats updated"
+            return {"runs": [f.name for f in folders]}
+
+        what = "goals marked" if goals is not None else "re-analyse"
+        return self.jobs.submit("analyse", f"Update stats for {asset.original_filename} "
+                                f"({what})", work, asset_id=asset_id)
 
     def file_path(self, asset_id: str, relative: str) -> Path | None:
         """A file inside an asset folder, or None if it isn't allowed."""
@@ -517,6 +606,13 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if url.path == "/api/state":
             return self._send_json(self.app.state())
+        if url.path == "/api/analytics":
+            query = parse_qs(url.query)
+            try:
+                return self._send_json(self.app.analytics(query.get("asset", [""])[0],
+                                                          query.get("run", [""])[0]))
+            except LookupError as error:
+                return self._error(404, str(error))
         if url.path == "/api/frame":
             query = parse_qs(url.query)
             try:
@@ -567,7 +663,23 @@ class Handler(BaseHTTPRequestHandler):
                     t=float(body.get("t", 0)), x=float(body.get("x", -1)),
                     y=float(body.get("y", -1)), size=str(body.get("size", "small")),
                     seconds=float(seconds) if seconds else None,
+                    height_cm=float(body["height_cm"]) if body.get("height_cm") else None,
                 )
+                return self._send_json({"job": job.id}, 202)
+            if url.path == "/api/review":
+                body = self._json_body()
+                verdict = body.get("verdict")
+                reviews = self.app.review(str(body.get("asset_id", "")), str(body.get("run", "")),
+                                          str(body.get("event", "")),
+                                          None if verdict in (None, "") else str(verdict))
+                return self._send_json({"reviews": reviews})
+            if url.path in ("/api/goals", "/api/analyse"):
+                body = self._json_body()
+                goals = body.get("goals") if url.path == "/api/goals" else None
+                if url.path == "/api/goals" and not isinstance(goals, list):
+                    raise ValueError("goals must be a list of boxes")
+                job = self.app.start_analyse(str(body.get("asset_id", "")),
+                                             body.get("run") or None, goals)
                 return self._send_json({"job": job.id}, 202)
             match = re.fullmatch(r"/api/jobs/([0-9a-f]{12})/cancel", url.path)
             if match:

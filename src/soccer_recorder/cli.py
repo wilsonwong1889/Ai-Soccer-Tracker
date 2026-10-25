@@ -1,5 +1,5 @@
 """Command line: soccer-recorder doctor | probe | ingest | list | make-sample |
-detect | benchmark | sample-frames | evaluate | track | follow | serve."""
+detect | benchmark | sample-frames | evaluate | track | follow | analyze | serve."""
 
 from __future__ import annotations
 
@@ -449,14 +449,67 @@ def cmd_follow(args: argparse.Namespace) -> int:
     print(file=sys.stderr)
     out = args.out or _run_dir(video, asset, f"follow-n{args.number}")
     metrics = follow_player(video, tracks, Seed(args.at, x, y), target, out,
-                            max_side=args.max_side, on_progress=_progress_printer())
+                            max_side=args.max_side, on_progress=_progress_printer(),
+                            tracks_run=folder.name)
     print(file=sys.stderr)
+    from .analytics import analyse, load_goals
+
+    result = analyse(video, tracks, out,
+                     goals=load_goals(asset.directory, tracks.size) if asset else [],
+                     player_height_m=args.height_cm / 100 if args.height_cm else None)
     coverage = metrics["coverage"]
     print(f"  found       {100 * (coverage['seen'] + coverage['filled']):.0f}% of the time "
           f"({100 * coverage['seen']:.0f}% seen, {100 * coverage['filled']:.0f}% filled in)")
     print(f"  links       {metrics['links']} ({metrics['uncertain_links']} uncertain)")
+    _print_analytics(result)
     print(f"  tracks      {'reused from' if cached else 'saved in'} {folder.name}")
     print(f"  outputs     {out}")
+    return 0
+
+
+def _print_analytics(result: dict) -> None:
+    stats = result["stats"]
+    print(f"  on the ball {stats['on_ball_s']:.0f} s, {stats['touches']} touches, "
+          f"{stats['dribbles']} dribbles")
+    print(f"  passes      {stats['passes_completed']}/{stats['passes_made']} completed, "
+          f"{stats['passes_received']} received; {stats['shots']} shots")
+    print(f"  running     ~{stats['distance_m']:.0f} m, top speed ~{stats['top_speed_kmh']} km/h, "
+          f"{stats['sprints']} sprints")
+    goals = [e for e in result["events"] if e["type"] in ("goal", "possible_goal")]
+    for goal in goals:
+        kind = "goal" if goal["type"] == "goal" else "possible goal"
+        print(f"  {kind:<11} at {goal['t']:.1f} s ({100 * goal['confidence']:.0f}%: "
+              f"{', '.join(goal['details'].get('evidence', []))})")
+    for note in result["notes"]:
+        print(f"  note        {note}")
+
+
+def _parse_goals(text: str) -> list[list[float]]:
+    try:
+        return [[float(v) for v in part.split(",")] for part in text.split(";") if part.strip()]
+    except ValueError:
+        raise ValueError("--goals looks like 0,0.4,0.05,0.7;0.95,0.4,1,0.7 "
+                         "(x1,y1,x2,y2 as fractions of the frame, one box per goal)") from None
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    from .analytics import analyse_run, save_goals
+
+    video, asset = _resolve(args.target, args.library or default_library())
+    if asset is None:
+        raise ValueError("analyze works on library videos: ingest the video first")
+    if args.goals is not None:
+        save_goals(asset.directory, _parse_goals(args.goals))
+    runs = sorted((asset.directory / "runs").glob("follow-*"))
+    run = asset.directory / "runs" / args.run if args.run else (runs[-1] if runs else None)
+    if run is None or not (run / "target.json").is_file():
+        raise ValueError("no follow run to analyse: run `soccer-recorder follow` first")
+    result = analyse_run(video, run, goals_dir=asset.directory,
+                         player_height_m=args.height_cm / 100 if args.height_cm else None)
+    print(f"Analytics for {result['target']['name'] or ''} #{result['target']['number']} "
+          f"({run.name})")
+    _print_analytics(result)
+    print(f"  saved       {run / 'analytics.json'}")
     return 0
 
 
@@ -638,9 +691,20 @@ def build_parser() -> argparse.ArgumentParser:
     follow.add_argument("--fps", type=float, default=15.0,
                         help="frames analysed per second (default 15)")
     _add_window_args(follow)
+    follow.add_argument("--height-cm", type=float,
+                        help="the player's height, for distances and speeds (default 140)")
     follow.add_argument("--library", type=Path, help=library_help)
     follow.add_argument("--out", type=Path, help="run folder")
     follow.set_defaults(func=cmd_follow)
+
+    analyze = sub.add_parser("analyze", help="re-work a follow run's stats and events")
+    analyze.add_argument("target", help="a library asset id (or its start)")
+    analyze.add_argument("--run", help="follow run folder name (default: the latest)")
+    analyze.add_argument("--goals", help="mark the goals: x1,y1,x2,y2 fractions of the "
+                                         "frame, ';' between goals ('' clears them)")
+    analyze.add_argument("--height-cm", type=float, help="the player's height")
+    analyze.add_argument("--library", type=Path, help=library_help)
+    analyze.set_defaults(func=cmd_analyze)
 
     serve = sub.add_parser("serve", help="open the local website: drop videos, run detection")
     serve.add_argument("--port", type=int, default=8765, help="default 8765")
@@ -654,7 +718,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (MediaError, IngestError, LabelError, DetectorUnavailable, ValueError) as error:
+    except (MediaError, IngestError, LabelError, DetectorUnavailable, ValueError,
+            LookupError) as error:
         # SeedNotFound is a ValueError: its message tells the user what to do.
         print(f"error: {error}", file=sys.stderr)
         return 2

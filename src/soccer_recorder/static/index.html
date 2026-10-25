@@ -63,6 +63,28 @@
   #f-number { width: 6em; }
   .tap { position: relative; margin: 8px 0; cursor: crosshair; background: #000; border-radius: 8px; overflow: hidden; }
   .tap img { display: block; width: 100%; height: auto; min-height: 80px; }
+  #analytics { margin-top: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+  .stat b { display: block; font-size: 20px; line-height: 1.2; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  #an-timeline { width: 100%; height: 150px; display: block; background: var(--bg); border-radius: 8px;
+                 border: 1px solid var(--line); cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+  .legend i, .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .heat { position: relative; border-radius: 8px; overflow: hidden; background: #000; margin-top: 6px; }
+  .heat img { display: block; width: 100%; height: auto; opacity: .85; }
+  .heat canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .heat.marking canvas { cursor: crosshair; }
+  .events { max-height: 440px; overflow-y: auto; margin-top: 6px; border-top: 1px solid var(--line); }
+  .ev { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .ev .t { font-variant-numeric: tabular-nums; min-width: 64px; white-space: nowrap; }
+  .ev .rv { padding: 2px 8px; }
+  .ev .rv[aria-pressed="true"][data-v="yes"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .ev .rv[aria-pressed="true"][data-v="no"] { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+  .conf { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   #f-marker { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid #ffc400;
               border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .55); pointer-events: none; }
   #player video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; }
@@ -91,6 +113,44 @@
     <video id="video" controls playsinline></video>
   </section>
 
+  <section id="analytics" class="card stack" hidden>
+    <div class="row">
+      <span class="grow"><strong id="an-title"></strong><br><span id="an-sub" class="small muted"></span></span>
+      <button id="an-reanalyse">Re-analyse</button>
+      <button id="an-close">Close</button>
+    </div>
+    <div id="an-status" class="small"></div>
+    <div id="an-cards" class="cards"></div>
+    <div>
+      <div class="row small"><strong class="grow">Timeline</strong><span class="muted">Click to watch that moment</span></div>
+      <svg id="an-timeline" viewBox="0 0 1000 150" role="img" aria-label="Timeline of the game"></svg>
+      <div id="an-legend" class="legend small"></div>
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="row small"><strong class="grow">Where they played</strong>
+          <button id="an-mark">Mark goals</button></div>
+        <div id="an-heat-box" class="heat"><img id="an-still" alt="The pitch"><canvas id="an-heat"></canvas></div>
+        <div id="an-mark-help" class="small stack" hidden>
+          <div>Drag a box over each goal mouth (up to two). The camera doesn't move, so this is
+            done once per video.</div>
+          <div class="row"><button id="an-goals-save" class="primary">Save goals and re-analyse</button>
+            <button id="an-goals-clear">Clear</button><button id="an-goals-cancel">Cancel</button></div>
+        </div>
+      </div>
+      <div>
+        <div class="row small"><strong class="grow">Moments</strong>
+          <select id="an-filter" aria-label="Which moments">
+            <option value="highlights">Highlights</option><option value="ball">On the ball</option>
+            <option value="sound">Sound</option><option value="all">Everything</option>
+          </select></div>
+        <div id="an-reviewed" class="small muted"></div>
+        <div id="an-events" class="events"></div>
+      </div>
+    </div>
+    <div id="an-notes" class="small muted"></div>
+  </section>
+
   <h2>Activity</h2>
   <div id="uploads" class="stack"></div>
   <div id="jobs" class="stack"></div>
@@ -111,6 +171,8 @@
         <input id="f-name" maxlength="30" autocomplete="off" placeholder="e.g. Emma"></label>
       <label class="field">Jersey number
         <input id="f-number" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="10" required></label>
+      <label class="field">Height in cm (optional)
+        <input id="f-height" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="140"></label>
     </div>
     <div>
       <div class="small"><strong>Tap your child</strong> at a moment when they're clearly visible.
@@ -226,11 +288,13 @@ async function post(url, body) {
   if (!res.ok) alert((await res.json().catch(() => ({}))).error || `Error ${res.status}`);
   refresh();
 }
-function watch(url, title) {
+function watch(url, title, at) {
+  const video = $("video");
   $("player").hidden = false;
   $("player-title").textContent = title;
-  $("video").src = url;
-  $("video").play().catch(() => {});
+  if (video.getAttribute("src") !== url) video.src = url;
+  const seek = () => { if (at != null) video.currentTime = Math.max(0, at); video.play().catch(() => {}); };
+  if (video.readyState >= 1) seek(); else video.addEventListener("loadedmetadata", seek, { once: true });
   $("player").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 $("player-close").addEventListener("click", () => {
@@ -239,12 +303,13 @@ $("player-close").addEventListener("click", () => {
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-action]");
   if (!b) return;
-  const { action, asset, url, title, job } = b.dataset;
+  const { action, asset, url, title, job, run } = b.dataset;
   if (action === "follow") openFollow(asset);
   else if (action === "detect") {
     const c = choices[asset] || {};
     post("/api/detect", { asset_id: asset, size: c.size || "small", seconds: c.seconds ?? 60 });
   } else if (action === "watch") watch(url, title);
+  else if (action === "analytics") openAnalytics(asset, run);
   else if (action === "cancel") post(`/api/jobs/${job}/cancel`);
 });
 document.addEventListener("change", (e) => {
@@ -319,9 +384,267 @@ $("follow-form").addEventListener("submit", (e) => {
   post("/api/follow", {
     asset_id: follow.asset.asset_id, number: $("f-number").value.trim(), name: $("f-name").value.trim(),
     t: follow.t, x: follow.x, y: follow.y, seconds: followSeconds(), size: $("f-size").value,
+    height_cm: Number($("f-height").value) || null,
   });
   $("follow").close();
 });
+
+// ---------- analytics ----------
+const TYPES = {
+  goal: ["Goal", "#e5484d"], possible_goal: ["Possible goal", "#f76b15"],
+  ball_in_goal: ["Ball in the goal", "#e5484d"], shot: ["Shot", "#ab4aba"],
+  dribble: ["Dribble", "#0090ff"], pass_completed: ["Pass to a teammate", "#30a46c"],
+  pass_lost: ["Pass lost", "#e54d2e"], pass: ["Pass", "#8b8d98"],
+  pass_received: ["Pass received", "#46a758"], ball_won: ["Won the ball", "#12a594"],
+  ball_gained: ["Got the ball", "#12a594"], touch: ["On the ball", "#ffb224"],
+  cheer: ["Cheering", "#f76b15"], whistle: ["Whistle", "#8b8d98"],
+};
+const FILTERS = {
+  highlights: ["goal", "possible_goal", "shot", "dribble", "pass_completed", "pass_lost", "pass",
+               "pass_received", "ball_won", "ball_gained"],
+  ball: ["touch", "dribble", "pass_completed", "pass_lost", "pass", "pass_received", "ball_won",
+         "ball_gained", "shot"],
+  sound: ["cheer", "whistle", "goal", "possible_goal"],
+};
+let an = null, marking = null;
+
+async function openAnalytics(asset, run) {
+  const res = await fetch(`/api/analytics?asset=${encodeURIComponent(asset)}&run=${encodeURIComponent(run)}`,
+                          { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || `Error ${res.status}`); return; }
+  an = data;
+  const t = an.target;
+  $("an-title").textContent = `${t.name ? t.name + " " : ""}#${t.number}`;
+  $("an-sub").textContent = `${an.filename} · ${duration(an.window.end_s - an.window.start_s)} analysed`;
+  $("an-status").textContent = "";
+  $("analytics").hidden = false;
+  renderAnalytics();
+  const still = $("an-still");
+  still.onload = drawHeat;
+  still.src = `/api/frame?asset=${encodeURIComponent(asset)}&t=${(an.window.start_s + an.window.end_s) / 2}`;
+  $("analytics").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("an-close").addEventListener("click", () => { $("analytics").hidden = true; stopMarking(); });
+
+function renderAnalytics() {
+  const st = an.stats, ev = an.events;
+  const byPlayer = ev.filter((e) => e.type === "goal" && e.details.by_followed_player).length;
+  const card = (value, label, sub) =>
+    `<div class="stat"><span>${esc(label)}</span><b>${esc(value)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</div>`;
+  const offShare = st.distance_m ? Math.round(100 * st.distance_off_ball_m / st.distance_m) : 0;
+  $("an-cards").innerHTML = [
+    card(duration(st.on_ball_s), "On the ball", `${st.touches} touches`),
+    card(`${st.passes_completed}/${st.passes_made}`, "Passes completed", `${st.passes_received} received`),
+    card(st.dribbles, "Dribbles", ""),
+    card(st.shots, "Shots", byPlayer ? `${byPlayer} goal${byPlayer === 1 ? "" : "s"}` : ""),
+    card(`≈ ${Math.round(st.distance_m)} m`, "Distance", `${offShare}% off the ball`),
+    card(`≈ ${st.top_speed_kmh} km/h`, "Top speed", `${st.sprints} sprints`),
+    card(st.team_possession_share == null ? "—" : pct(st.team_possession_share), "Team had the ball", ""),
+    card(st.goals_in_game, "Goals in the game", st.possible_goals ? `+ ${st.possible_goals} possible` : ""),
+    card(pct(an.ball.seen_share), "Ball seen", "how often the ball was found"),
+  ].join("");
+  $("an-notes").innerHTML = an.notes.map((n) => `<div>${esc(n)}</div>`).join("");
+  renderTimeline();
+  renderEvents();
+}
+
+function seekTo(t) {
+  if (!an.video_url) return;
+  const label = `${an.filename} · ${$("an-title").textContent}`;
+  watch(an.video_url, label, t - an.window.start_s - 2);
+}
+
+function renderTimeline() {
+  // Drawn at the timeline's real width so markers stay round on any screen.
+  const svg = $("an-timeline"), W = Math.max(200, Math.round(svg.clientWidth || 1000));
+  svg.setAttribute("viewBox", `0 0 ${W} 150`);
+  const start = an.window.start_s, span = Math.max(1, an.window.end_s - start);
+  const x = (t) => Math.max(0, Math.min(W, ((t - start) / span) * W));
+  const parts = [];
+  const loud = an.audio.loudness_rise_db || [];
+  if (loud.length) {
+    const step = an.audio.step_s, pts = loud.map((v, i) =>
+      `${x(start + i * step).toFixed(1)},${(36 - Math.max(0, Math.min(30, v)) / 30 * 32).toFixed(1)}`);
+    parts.push(`<path d="M0,36 L${pts.join(" L")} L${W},36 Z" fill="#f76b15" opacity="0.35"/>`);
+  }
+  parts.push(`<line x1="0" x2="${W}" y1="40" y2="40" stroke="currentColor" opacity="0.15"/>`);
+  for (const e of an.events) {
+    const [, colour] = TYPES[e.type] || ["", "#888"];
+    const tip = `<title>${esc((TYPES[e.type] || [e.type])[0])} · ${duration(e.t)}</title>`;
+    if (e.type === "touch") {
+      parts.push(`<rect data-t="${e.t}" x="${x(e.t)}" y="48" width="${Math.max(2, x(e.end_t) - x(e.t))}" height="14" fill="${colour}" rx="2">${tip}</rect>`);
+    } else if (e.type === "goal" || e.type === "possible_goal") {
+      const dash = e.type === "goal" ? "" : `stroke-dasharray="4 3"`;
+      parts.push(`<g data-t="${e.t}"><line x1="${x(e.t)}" x2="${x(e.t)}" y1="0" y2="150" stroke="${colour}" stroke-width="3" ${dash}/>
+        <rect x="${x(e.t) - 6}" y="112" width="12" height="12" fill="${colour}" transform="rotate(45 ${x(e.t)} 118)"/>${tip}</g>`);
+    } else if (e.type === "whistle") {
+      parts.push(`<rect data-t="${e.t}" x="${x(e.t) - 1}" y="132" width="3" height="16" fill="${colour}">${tip}</rect>`);
+    } else if (e.type !== "cheer" && e.type !== "ball_in_goal") {
+      const y = e.type === "dribble" ? 78 : e.type === "shot" ? 100 : 90;
+      parts.push(`<circle data-t="${e.t}" cx="${x(e.t)}" cy="${y}" r="5" fill="${colour}">${tip}</circle>`);
+    }
+  }
+  svg.innerHTML = parts.join("");
+  const shown = ["goal", "possible_goal", "shot", "dribble", "pass_completed", "pass_received", "pass_lost",
+                 "ball_won", "touch", "whistle"].filter((k) => an.events.some((e) => e.type === k));
+  $("an-legend").innerHTML = `<span><i style="background:#f76b15;opacity:.5"></i> crowd noise</span>` +
+    shown.map((k) => `<span><i style="background:${TYPES[k][1]}"></i> ${esc(TYPES[k][0])}</span>`).join("");
+}
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (an && !$("analytics").hidden) renderTimeline(); }, 150);
+});
+$("an-timeline").addEventListener("click", (e) => {
+  if (!an) return;
+  const hit = e.target.closest("[data-t]");
+  if (hit) return seekTo(Number(hit.dataset.t));
+  const box = $("an-timeline").getBoundingClientRect();
+  seekTo(an.window.start_s + ((e.clientX - box.left) / box.width) * (an.window.end_s - an.window.start_s));
+});
+
+function describe(e) {
+  const d = e.details || {};
+  if (d.evidence) return d.evidence.join(" + ") + (d.by_followed_player ? ` · by #${an.target.number}` : "");
+  const bits = [];
+  if (d.seconds) bits.push(`${d.seconds} s`);
+  if (d.distance_m) bits.push(`~${d.distance_m} m`);
+  if (d.loudness_db) bits.push(`+${d.loudness_db} dB`);
+  if (d.frequency_hz) bits.push(`${(d.frequency_hz / 1000).toFixed(1)} kHz`);
+  return bits.join(" · ");
+}
+
+function renderEvents() {
+  const filter = $("an-filter").value;
+  const keep = filter === "all" ? null : new Set(FILTERS[filter]);
+  const list = an.events.filter((e) => !keep || keep.has(e.type));
+  $("an-events").innerHTML = list.length ? list.map((e) => {
+    const [label, colour] = TYPES[e.type] || [e.type, "#888"];
+    const verdict = an.reviews[e.id];
+    return `<div class="ev">
+      <button class="t" data-seek="${e.t}" title="Watch">▶ ${duration(e.t)}</button>
+      <span class="dot" style="background:${colour}"></span>
+      <span class="grow small"><strong>${esc(label)}</strong> <span class="muted">${esc(describe(e))}</span></span>
+      <span class="conf" title="How sure the automatic guess is">${Math.round(e.confidence * 100)}%</span>
+      <button class="rv" data-ev="${esc(e.id)}" data-v="yes" aria-pressed="${verdict === "yes"}" title="Right">✓</button>
+      <button class="rv" data-ev="${esc(e.id)}" data-v="no" aria-pressed="${verdict === "no"}" title="Wrong">✗</button>
+    </div>`;
+  }).join("") : `<div class="small muted" style="padding:10px 0">Nothing of this kind was found.</div>`;
+  const summary = Object.values(an.review_summary || {});
+  const reviewed = summary.reduce((n, s) => n + s.reviewed, 0);
+  const right = summary.reduce((n, s) => n + s.confirmed, 0);
+  $("an-reviewed").textContent = reviewed
+    ? `You've checked ${reviewed} of ${an.events.length} moments: ${right} right, ${reviewed - right} wrong.`
+    : "Tick ✓ or ✗ to tell us whether each moment really happened.";
+}
+$("an-filter").addEventListener("change", renderEvents);
+$("an-events").addEventListener("click", async (e) => {
+  const seek = e.target.closest("[data-seek]");
+  if (seek) return seekTo(Number(seek.dataset.seek));
+  const button = e.target.closest(".rv");
+  if (!button) return;
+  const verdict = an.reviews[button.dataset.ev] === button.dataset.v ? null : button.dataset.v;
+  const res = await fetch("/api/review", { method: "POST", headers: { ...ACTION, "Content-Type": "application/json" },
+    body: JSON.stringify({ asset_id: an.asset_id, run: an.run, event: button.dataset.ev, verdict }) });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || `Error ${res.status}`); return; }
+  an.reviews = data.reviews;
+  an.review_summary = {};
+  for (const ev of an.events) {
+    const entry = (an.review_summary[ev.type] ||= { total: 0, reviewed: 0, confirmed: 0 });
+    entry.total++;
+    if (an.reviews[ev.id]) { entry.reviewed++; entry.confirmed += an.reviews[ev.id] === "yes"; }
+  }
+  renderEvents();
+});
+
+// Heatmap over a still of the pitch, plus marking the goals.
+function drawHeat() {
+  const img = $("an-still"), canvas = $("an-heat");
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const heat = an.stats.heatmap, cw = W / heat.cols, ch = H / heat.rows;
+  heat.values.forEach((row, r) => row.forEach((v, c) => {
+    if (!v) return;
+    const cx = (c + 0.5) * cw, cy = (r + 0.5) * ch, radius = Math.max(cw, ch) * 1.3;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    g.addColorStop(0, `rgba(255, 60, 0, ${0.25 + 0.5 * v})`);
+    g.addColorStop(1, "rgba(255, 60, 0, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  }));
+  const goals = marking ? marking.goals : an.settings.goals;
+  ctx.lineWidth = Math.max(2, W / 300);
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = "#ffffff";
+  for (const [x1, y1, x2, y2] of goals) ctx.strokeRect(x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H);
+  ctx.setLineDash([]);
+}
+function stopMarking() {
+  marking = null;
+  $("an-heat-box").classList.remove("marking");
+  $("an-mark-help").hidden = true;
+  $("an-mark").hidden = false;
+  if (an) drawHeat();
+}
+$("an-mark").addEventListener("click", () => {
+  marking = { goals: an.settings.goals.map((g) => [...g]), start: null };
+  $("an-heat-box").classList.add("marking");
+  $("an-mark-help").hidden = false;
+  $("an-mark").hidden = true;
+});
+$("an-goals-cancel").addEventListener("click", stopMarking);
+$("an-goals-clear").addEventListener("click", () => { marking.goals = []; drawHeat(); });
+function canvasPoint(e) {
+  const box = $("an-heat").getBoundingClientRect();
+  return [Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)),
+          Math.min(1, Math.max(0, (e.clientY - box.top) / box.height))];
+}
+$("an-heat").addEventListener("pointerdown", (e) => {
+  if (!marking) return;
+  $("an-heat").setPointerCapture(e.pointerId);
+  marking.start = canvasPoint(e);
+  if (marking.goals.length >= 2) marking.goals.shift();
+  marking.goals.push([...marking.start, ...marking.start]);
+});
+$("an-heat").addEventListener("pointermove", (e) => {
+  if (!marking || !marking.start) return;
+  const [x, y] = canvasPoint(e), [sx, sy] = marking.start;
+  marking.goals[marking.goals.length - 1] = [Math.min(sx, x), Math.min(sy, y), Math.max(sx, x), Math.max(sy, y)];
+  drawHeat();
+});
+$("an-heat").addEventListener("pointerup", () => {
+  if (!marking || !marking.start) return;
+  marking.start = null;
+  const g = marking.goals[marking.goals.length - 1];
+  if (g[2] - g[0] < 0.01 || g[3] - g[1] < 0.01) marking.goals.pop();  // a click, not a box
+  drawHeat();
+});
+$("an-goals-save").addEventListener("click", () => {
+  const goals = marking.goals;
+  stopMarking();
+  reanalyse("/api/goals", { asset_id: an.asset_id, goals }, "Saving the goals and re-working the stats…");
+});
+$("an-reanalyse").addEventListener("click", () =>
+  reanalyse("/api/analyse", { asset_id: an.asset_id, run: an.run }, "Re-working the stats…"));
+async function reanalyse(url, body, message) {
+  const res = await fetch(url, { method: "POST", headers: { ...ACTION, "Content-Type": "application/json" },
+                                 body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) { $("an-status").innerHTML = `<span class="error">${esc(data.error || res.status)}</span>`; return; }
+  $("an-status").textContent = message;
+  const { asset_id: asset, run } = an;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 700));
+    const job = (state.jobs || []).find((j) => j.id === data.job);
+    if (job && (job.status === "done" || job.status === "failed" || job.status === "cancelled")) {
+      if (job.status !== "done") { $("an-status").innerHTML = `<span class="error">${esc(job.error || job.status)}</span>`; return; }
+      return openAnalytics(asset, run);
+    }
+  }
+}
 
 // ---------- rendering ----------
 function renderJobs(jobs) {
@@ -374,8 +697,12 @@ function renderAssets(assets) {
           (${pct(r.seen)} seen, ${pct(r.filled)} filled in)
           · ${esc(r.links)} reconnection${r.links === 1 ? "" : "s"}
           ${r.uncertain_links ? `<span class="tag">${esc(r.uncertain_links)} uncertain</span>` : ""}
+          ${r.stats ? `<br>${esc(r.stats.touches)} touches · ${duration(r.stats.on_ball_s)} on the ball
+            · ${esc(r.stats.passes_completed)}/${esc(r.stats.passes_made)} passes · ${esc(r.stats.dribbles)} dribbles
+            · ${esc(r.stats.shots)} shots${r.stats.goals ? ` · <strong>${esc(r.stats.goals)} goal${r.stats.goals === 1 ? "" : "s"}</strong>` : ""}` : ""}
           <span class="muted">· ${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</span>
         </span>
+        <button class="primary" data-action="analytics" data-asset="${esc(a.asset_id)}" data-run="${esc(r.name)}">Analytics</button>
         ${r.video_url ? `<button data-action="watch" data-url="${esc(r.video_url)}"
             data-title="${esc(a.filename + " · " + r.label)}">Watch</button>` : ""}
         <a class="small" href="${esc(r.metrics_url)}" target="_blank">numbers</a>

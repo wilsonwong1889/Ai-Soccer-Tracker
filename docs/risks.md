@@ -80,7 +80,7 @@ update. See [prior-art.md](prior-art.md#competitors).
 | T3 | **Jersey numbers are often unreadable**: motion blur, angle, low gym light. One study of wide shots reported only 30.6% number accuracy | Treat jersey reads as occasional confirmation, not ground truth (brief §4). The parent enters the number, so we only need to *check* it | R5 |
 | T4 | **HDR and variable frame rate** iPhone defaults | Detected and warned at ingest (R1). Analysis resamples to constant rate. HDR needs tone-mapping or a recording guide | R1 ✔, R2 |
 | T5 | **Processing speed on the M4 (16 GB)** may be too slow to iterate on full games | Proxies (R1). Benchmark MPS early. Rent a cloud GPU only when justified (ask first: it's a paid service) | R2 |
-| T6 | **Highlight detection quality** | Brief: no promises of action recognition before evaluation. Report candidates with confidence and manual review (R7) | R7 |
+| T6 | **Highlight detection quality.** The event rules (passes, dribbles, shots, goals) work on synthetic games but are unmeasured on real ones. Known traps:<br>• a small ball, often hidden in a wide shot;<br>• in indoor halls with several courts, cheering and whistles from neighbouring games;<br>• near misses cheered like goals | Candidates only, with confidence and ✓/✗ review (built). Goals need ball-in-goal evidence; cheering alone is only a *possible* goal. The *Ball seen* card shows the data quality. Measure precision per event type from reviews before any claim | R7 |
 | T7 | **Long, large uploads from phones** | Resumable uploads; the content-hash asset id makes retries idempotent | R8–R9 |
 
 ## Licensing
@@ -99,3 +99,4 @@ update. See [prior-art.md](prior-art.md#competitors).
 | P2 | **Minors' data laws** (e.g. COPPA in the US; PIPEDA and provincial laws in Canada) apply to images of children | Get legal advice before the beta and before the campaign makes privacy claims |
 | P3 | **Footage leaking**: through git, logs or shared manifests | R1: footage blocked from git; manifests hold no folder paths. R8: private storage, signed URLs, deletion on a retention schedule |
 | P4 | **Evaluation footage** used for R2–R5 | Written permission from each family, stored outside the repo, deletable on request. Never used for training without separate consent |
+| P5 | **Sound recordings include voices**: parents, coaches, children | Only loudness and tone are analysed, on the computer; nothing is transcribed or kept beyond the numbers in analytics.json. R8 must keep audio processing as private as the video | R8 |
