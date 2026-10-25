@@ -114,8 +114,9 @@ What this means (prices unchanged; this is input for your decisions):
     Trace says it is weakest;
   - your own downloads.
 - **$9.99/month is the lowest per-player-highlight price found.** Trace and
-  PlayerTrac sit around $15. That's room to price higher if the economics in
-  [risks.md](risks.md#financial) need it.
+  PlayerTrac sit around $15. Decided 2026-10-25: don't raise it yet. The
+  headroom is there if the measured costs in [risks.md](risks.md#financial)
+  later need it.
 - **Crowdfunding in this space has rewarded hardware sold as "no
   subscription".** XbotGo's Falcon campaign raised $2.55M (reported). A
   software subscription is a harder sell, so prepaid, capped founder plans fit
@@ -125,8 +126,10 @@ What this means (prices unchanged; this is input for your decisions):
 
 ## Changes to the plan
 
+- **Decided 2026-10-25**: only parts that are free for commercial use, for
+  now ([decisions.md](decisions.md) T10/T11). Prices aren't raised yet.
 - **R2**: start with RF-DETR (Apache sizes) and benchmark YOLOX against it.
-  Ultralytics is out unless you choose to pay for its license.
+  No Ultralytics models.
 - **R3**: `trackers` (BoT-SORT/ByteTrack) plus gta-link stitching, scored with
   TrackEval on our clips and on held-out SoccerTrack v2 matches.
 - **R4**: the parent's click seeds the track; SAM 2/DAM4SAM repairs ambiguous
