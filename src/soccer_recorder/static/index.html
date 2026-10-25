@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soccer Recorder</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #17202a; --muted: #5d6b7a; --line: #dfe3e8;
+    --accent: #1f7a4d; --accent-soft: #e3f2ea; --warn: #9a5b00; --warn-soft: #fff3df;
+    --bad: #b42318; --bad-soft: #fde7e5; --bar: #e8ebef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --card: #1a2027; --text: #e7ecf1; --muted: #9aa7b4; --line: #2c343d;
+      --accent: #4cc38a; --accent-soft: #173326; --warn: #f0b45a; --warn-soft: #33270f;
+      --bad: #ff7b72; --bad-soft: #3a1714; --bar: #262e37;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .stack > * + * { margin-top: 10px; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 34px 16px; text-align: center;
+          cursor: pointer; background: var(--card); transition: border-color .15s, background .15s; }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { font-size: 17px; display: block; margin-bottom: 4px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+  .name { font-weight: 600; overflow-wrap: anywhere; }
+  .bar { height: 8px; background: var(--bar); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .bar.indeterminate > span { width: 35%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { from { margin-left: -35%; } to { margin-left: 100%; } }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bar); white-space: nowrap; }
+  .pill.running, .pill.queued { background: var(--accent-soft); color: var(--accent); }
+  .pill.done { background: var(--accent-soft); color: var(--accent); }
+  .pill.failed { background: var(--bad-soft); color: var(--bad); }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }
+  .error { color: var(--bad); }
+  button, select { font: inherit; border-radius: 7px; border: 1px solid var(--line); background: var(--card);
+                   color: var(--text); padding: 5px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .runs { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
+  .run { padding: 6px 0; }
+  #player { margin-top: 16px; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
+           padding: 16px; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .field input, .field select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line);
+                                background: var(--bg); color: var(--text); }
+  .field input { min-width: 0; }
+  #f-number { width: 6em; }
+  .tap { position: relative; margin: 8px 0; cursor: crosshair; background: #000; border-radius: 8px; overflow: hidden; }
+  .tap img { display: block; width: 100%; height: auto; min-height: 80px; }
+  #analytics { margin-top: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+  .stat b { display: block; font-size: 20px; line-height: 1.2; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  #an-timeline { width: 100%; height: 150px; display: block; background: var(--bg); border-radius: 8px;
+                 border: 1px solid var(--line); cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+  .legend i, .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .heat { position: relative; border-radius: 8px; overflow: hidden; background: #000; margin-top: 6px; }
+  .heat img { display: block; width: 100%; height: auto; opacity: .85; }
+  .heat canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .heat.marking canvas { cursor: crosshair; }
+  .events { max-height: 440px; overflow-y: auto; margin-top: 6px; border-top: 1px solid var(--line); }
+  .ev { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .ev .t { font-variant-numeric: tabular-nums; min-width: 64px; white-space: nowrap; }
+  .ev .rv { padding: 2px 8px; }
+  .ev .rv[aria-pressed="true"][data-v="yes"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .ev .rv[aria-pressed="true"][data-v="no"] { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+  .conf { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #f-marker { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid #ffc400;
+              border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, .55); pointer-events: none; }
+  #f-box { position: absolute; border: 3px solid #ffc400; border-radius: 4px; pointer-events: none;
+           box-shadow: 0 0 0 2px rgba(0, 0, 0, .45); }
+  #f-box span { position: absolute; bottom: 100%; left: -3px; margin-bottom: 3px; white-space: nowrap; font-size: 12px;
+                background: #ffc400; color: #000; padding: 0 6px; border-radius: 4px; font-weight: 600; }
+  .exports .row { padding: 4px 0; }
+  #player video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; }
+  .empty { padding: 18px; text-align: center; }
+  a { color: var(--accent); }
+  code { font-size: 13px; background: var(--bar); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Soccer Recorder</h1>
+    <span class="muted small">Runs only on this computer. Videos never leave it.</span>
+  </header>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Add videos">
+    <strong>Drop game videos here</strong>
+    <span class="muted">or click to choose files (.mov, .mp4)</span>
+    <input id="picker" type="file" accept="video/*,.mov,.mp4,.m4v" multiple hidden>
+  </div>
+  <div id="notice" class="small muted" style="margin-top:8px"></div>
+
+  <section id="player" class="card stack" hidden>
+    <div class="row"><span id="player-title" class="grow name"></span>
+      <button id="player-close">Close</button></div>
+    <video id="video" controls playsinline></video>
+  </section>
+
+  <section id="analytics" class="card stack" hidden>
+    <div class="row">
+      <span class="grow"><strong id="an-title"></strong><br><span id="an-sub" class="small muted"></span></span>
+      <button id="an-fix" title="Tap your child where the follower got it wrong">Wrong player? Fix it</button>
+      <button id="an-reanalyse">Re-analyse</button>
+      <button id="an-close">Close</button>
+    </div>
+    <div id="an-status" class="small"></div>
+    <div id="an-cards" class="cards"></div>
+    <div>
+      <div class="row small"><strong class="grow">Timeline</strong><span class="muted">Click to watch that moment</span></div>
+      <svg id="an-timeline" viewBox="0 0 1000 150" role="img" aria-label="Timeline of the game"></svg>
+      <div id="an-legend" class="legend small"></div>
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="row small"><strong class="grow">Where they played</strong>
+          <button id="an-mark">Mark goals</button></div>
+        <div id="an-heat-box" class="heat"><img id="an-still" alt="The pitch"><canvas id="an-heat"></canvas></div>
+        <div id="an-mark-help" class="small stack" hidden>
+          <div>Drag a box over each goal mouth (up to two). The camera doesn't move, so this is
+            done once per video.</div>
+          <div class="row"><button id="an-goals-save" class="primary">Save goals and re-analyse</button>
+            <button id="an-goals-clear">Clear</button><button id="an-goals-cancel">Cancel</button></div>
+        </div>
+      </div>
+      <div>
+        <div class="row small"><strong class="grow">Moments</strong>
+          <select id="an-filter" aria-label="Which moments">
+            <option value="highlights">Highlights</option><option value="ball">On the ball</option>
+            <option value="sound">Sound</option><option value="all">Everything</option>
+          </select></div>
+        <div id="an-reviewed" class="small muted"></div>
+        <div id="an-learnt" class="small muted"></div>
+        <div id="an-events" class="events"></div>
+      </div>
+    </div>
+    <div class="exports">
+      <div class="row small"><strong class="grow">Videos to keep</strong>
+        <label><input type="checkbox" id="an-vertical"> Vertical, for phones</label></div>
+      <div class="row">
+        <button id="an-make-cam" title="The whole game, zoomed in on your child">Make player cam</button>
+        <button id="an-make-reel" title="Their best moments, back to back">Make highlight reel</button>
+        <span id="an-reel-info" class="small muted grow"></span>
+      </div>
+      <div id="an-export-list" class="small"></div>
+    </div>
+    <div id="an-notes" class="small muted"></div>
+  </section>
+
+  <h2>Activity</h2>
+  <div id="uploads" class="stack"></div>
+  <div id="jobs" class="stack"></div>
+
+  <h2>Videos</h2>
+  <div id="assets" class="stack"><div class="card empty muted">Loading…</div></div>
+
+  <p class="small muted" id="footer"></p>
+</main>
+
+<dialog id="follow" aria-labelledby="follow-title">
+  <form id="follow-form" class="stack">
+    <div class="row"><strong id="follow-title" class="grow">Follow a player</strong>
+      <button type="button" data-close aria-label="Close">✕</button></div>
+    <div class="small muted" id="follow-video"></div>
+    <div class="row" id="f-who">
+      <label class="field grow">Player's name (optional)
+        <input id="f-name" maxlength="30" autocomplete="off" placeholder="e.g. Emma"></label>
+      <label class="field">Jersey number
+        <input id="f-number" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="10" required></label>
+      <label class="field">Height in cm (optional)
+        <input id="f-height" inputmode="numeric" maxlength="3" autocomplete="off" placeholder="140"></label>
+    </div>
+    <div>
+      <div class="small" id="f-help"><strong>Tap your child</strong> at a moment when they're clearly visible.
+        Use the slider to pick the moment.</div>
+      <div id="tap" class="tap"><img id="f-frame" alt="A moment from the video"><div id="f-box" hidden><span></span></div><span id="f-marker" hidden></span></div>
+      <div class="row small">
+        <input id="f-time" type="range" min="0" step="0.5" value="0" class="grow" aria-label="Moment in the video">
+        <span id="f-time-label">0:00</span></div>
+    </div>
+    <div class="row" id="f-options">
+      <label class="field">How much to analyse <select id="f-seconds"></select></label>
+      <label class="field">Model <select id="f-size"></select></label>
+    </div>
+    <div class="row">
+      <span id="f-hint" class="small muted grow"></span>
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary" id="follow-start" disabled>Start following</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const ACTION = { "X-Soccer-Recorder": "1" };
+const VIDEO_EXT = /\.(mov|mp4|m4v|mkv|avi)$/i;
+const choices = {};  // asset id -> {size, seconds}, kept across refreshes
+let lastAssets = "", lastJobs = "", state = null, activeUploads = 0;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function duration(seconds) {
+  if (seconds == null) return "?";
+  const s = Math.round(seconds), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+function bytes(n) {
+  if (n == null) return "";
+  const units = ["B", "KB", "MB", "GB"]; let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+const pct = (x) => x == null ? "?" : `${Math.round(x * 100)}%`;
+
+// ---------- uploads ----------
+const queue = [];
+function addFiles(files) {
+  const skipped = [];
+  for (const file of files) {
+    if (file.type.startsWith("video/") || VIDEO_EXT.test(file.name)) queue.push(file);
+    else skipped.push(file.name);
+  }
+  $("notice").textContent = skipped.length ? `Skipped (not a video): ${skipped.join(", ")}` : "";
+  pump();
+}
+function pump() {
+  if (activeUploads || !queue.length) return;
+  upload(queue.shift());
+}
+function upload(file) {
+  activeUploads++;
+  const row = document.createElement("div");
+  row.className = "card";
+  row.innerHTML = `<div class="row"><span class="grow name">${esc(file.name)}</span>
+    <span class="pill running">Uploading</span></div>
+    <div class="small muted" data-msg>${bytes(file.size)}</div><div class="bar"><span></span></div>`;
+  $("uploads").prepend(row);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}`);
+  for (const [k, v] of Object.entries(ACTION)) xhr.setRequestHeader(k, v);
+  xhr.setRequestHeader("Content-Type", "application/octet-stream");
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    row.querySelector(".bar span").style.width = `${(100 * e.loaded) / e.total}%`;
+    row.querySelector("[data-msg]").textContent = `${bytes(e.loaded)} of ${bytes(e.total)}`;
+  };
+  const finish = (ok, message) => {
+    activeUploads--;
+    if (ok) row.remove();
+    else {
+      row.querySelector(".pill").className = "pill failed";
+      row.querySelector(".pill").textContent = "Upload failed";
+      row.querySelector("[data-msg]").innerHTML = `<span class="error">${esc(message)}</span>`;
+    }
+    refresh(); pump();
+  };
+  xhr.onload = () => xhr.status < 300 ? finish(true)
+    : finish(false, (JSON.parse(xhr.responseText || "{}").error) || `Error ${xhr.status}`);
+  xhr.onerror = () => finish(false, "The server didn't respond. Is it still running?");
+  xhr.send(file);
+}
+const drop = $("drop");
+drop.addEventListener("click", () => $("picker").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") $("picker").click(); });
+$("picker").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => {
+  e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => {
+  e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+// Dropping a file anywhere else shouldn't navigate away from the page.
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+window.addEventListener("beforeunload", (e) => {
+  if (activeUploads || queue.length) { e.preventDefault(); e.returnValue = ""; }
+});
+
+// ---------- actions ----------
+async function post(url, body) {
+  const res = await fetch(url, { method: "POST",
+    headers: { ...ACTION, "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (!res.ok) alert((await res.json().catch(() => ({}))).error || `Error ${res.status}`);
+  refresh();
+}
+function watch(url, title, at) {
+  const video = $("video");
+  $("player").hidden = false;
+  $("player-title").textContent = title;
+  if (video.getAttribute("src") !== url) video.src = url;
+  const seek = () => { if (at != null) video.currentTime = Math.max(0, at); video.play().catch(() => {}); };
+  if (video.readyState >= 1) seek(); else video.addEventListener("loadedmetadata", seek, { once: true });
+  $("player").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("player-close").addEventListener("click", () => {
+  $("video").pause(); $("video").removeAttribute("src"); $("video").load(); $("player").hidden = true;
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-action]");
+  if (!b) return;
+  const { action, asset, url, title, job, run } = b.dataset;
+  if (action === "follow") openFollow(asset);
+  else if (action === "detect") {
+    const c = choices[asset] || {};
+    post("/api/detect", { asset_id: asset, size: c.size || "small", seconds: c.seconds ?? 60 });
+  } else if (action === "watch") watch(url, title);
+  else if (action === "analytics") openAnalytics(asset, run);
+  else if (action === "cancel") post(`/api/jobs/${job}/cancel`);
+});
+document.addEventListener("change", (e) => {
+  const box = e.target.closest("[data-consent]");
+  if (box) {
+    if (box.checked && !confirm("Only tick this if every family whose child can be seen in this video agreed, " +
+                                "and you've kept their written permission. Continue?")) {
+      box.checked = false; return;
+    }
+    post("/api/consent", { asset_id: box.dataset.asset, [box.dataset.consent]: box.checked });
+    return;
+  }
+  const el = e.target.closest("[data-choice]");
+  if (!el) return;
+  const c = (choices[el.dataset.asset] ||= {});
+  c[el.dataset.choice] = el.dataset.choice === "seconds"
+    ? (el.value === "all" ? null : Number(el.value)) : el.value;
+});
+
+// ---------- following a player ----------
+const follow = { asset: null, t: 0, x: null, y: null, fix: null };
+let frameTimer = null;
+const followSeconds = () => ($("f-seconds").value === "all" ? null : Number($("f-seconds").value));
+const FOLLOW_HELP = $("f-help").innerHTML;
+function openFollow(assetId) {
+  const a = state.assets.find((x) => x.asset_id === assetId);
+  if (!a) return;
+  follow.asset = a;
+  follow.fix = null;
+  $("follow-title").textContent = "Follow a player";
+  $("f-who").hidden = $("f-options").hidden = false;
+  $("f-help").innerHTML = FOLLOW_HELP;
+  $("follow-start").textContent = "Start following";
+  $("follow-video").textContent = `${a.filename} · ${duration(a.duration_s)}`;
+  $("f-seconds").innerHTML = lengthOptions(60);
+  $("f-size").innerHTML = sizeOptions((choices[assetId] || {}).size || "small");
+  $("f-time").min = 0;
+  limitSlider();
+  $("f-time").value = Math.min(5, Number($("f-time").max));
+  loadFrame();
+  $("follow").showModal();
+  $("f-number").focus();
+}
+// Corrections: show who is followed now, and tap the right child where it's wrong.
+function openFix() {
+  const a = state.assets.find((x) => x.asset_id === an.asset_id);
+  if (!a) return;
+  const label = $("an-title").textContent;
+  follow.asset = a;
+  follow.fix = { run: an.run, label, start: an.window.start_s, end: an.window.end_s };
+  $("follow-title").textContent = `Fix who is ${label}`;
+  $("f-who").hidden = $("f-options").hidden = true;
+  $("f-help").innerHTML = `Find a moment where the box is on someone else (or missing), then
+    <strong>tap ${esc(label)}</strong>. Earlier taps are kept, and so are your ticks and crosses.`;
+  $("follow-start").textContent = "Follow again";
+  $("follow-video").textContent = `${a.filename} · ${duration(an.window.end_s - an.window.start_s)} analysed`;
+  $("f-time").min = follow.fix.start;
+  limitSlider();
+  // Start where the followed video is paused, if it's showing this run.
+  const video = $("video"), watching = !$("player").hidden && an.video_url
+    && video.getAttribute("src") === an.video_url;
+  $("f-time").value = watching ? an.window.start_s + video.currentTime : follow.fix.start;
+  loadFrame();
+  $("follow").showModal();
+}
+function limitSlider() {
+  const a = follow.asset, limit = followSeconds();
+  const max = follow.fix ? follow.fix.end
+    : Math.max(0, Math.min(a.duration_s, limit ?? a.duration_s) - 0.2);
+  $("f-time").max = max.toFixed(1);
+  if (Number($("f-time").value) > max) { $("f-time").value = max; loadFrame(); }
+}
+function loadFrame() {
+  follow.t = Number($("f-time").value);
+  $("f-time-label").textContent = duration(follow.t);
+  follow.x = follow.y = null;
+  $("f-marker").hidden = true;
+  $("f-frame").src = `/api/frame?asset=${encodeURIComponent(follow.asset.asset_id)}&t=${follow.t}`;
+  showFollowed(follow.t);
+  updateFollow();
+}
+async function showFollowed(t) {
+  const box = $("f-box");
+  box.hidden = true;
+  if (!follow.fix) return;
+  const res = await fetch(`/api/position?asset=${encodeURIComponent(follow.asset.asset_id)}` +
+                          `&run=${encodeURIComponent(follow.fix.run)}&t=${t}`, { cache: "no-store" });
+  if (!res.ok || follow.t !== t || !follow.fix) return;
+  const where = await res.json();
+  follow.fix.lost = !where.box;
+  if (where.box) {
+    const [x1, y1, x2, y2] = where.box;
+    Object.assign(box.style, { left: `${100 * x1}%`, top: `${100 * y1}%`,
+                               width: `${100 * (x2 - x1)}%`, height: `${100 * (y2 - y1)}%` });
+    box.querySelector("span").textContent = where.state === "seen" ? follow.fix.label : `${follow.fix.label}?`;
+    box.hidden = false;
+  }
+  updateFollow();
+}
+function updateFollow() {
+  const tapped = follow.x !== null;
+  if (follow.fix) {
+    $("follow-start").disabled = !tapped;
+    $("f-hint").textContent = tapped ? `Ready: we'll follow ${follow.fix.label} again, using this tap too.`
+      : follow.fix.lost ? "Not following anyone here. Tap your child to fix it."
+      : "The amber box is who we follow now. If it's wrong, tap your child.";
+    return;
+  }
+  const number = $("f-number").value.trim();
+  const numberOk = /^\d{1,3}$/.test(number);
+  $("follow-start").disabled = !(numberOk && tapped && state.detection_available);
+  $("f-hint").textContent = !state.detection_available ? "Detection isn't installed (uv sync --extra detect)."
+    : !numberOk ? "Enter the jersey number."
+    : !tapped ? "Now tap your child in the picture."
+    : `Ready to follow #${number}, starting from the moment you tapped (${duration(follow.t)}).`;
+}
+$("f-time").addEventListener("input", () => {
+  $("f-time-label").textContent = duration(Number($("f-time").value));
+  clearTimeout(frameTimer);
+  frameTimer = setTimeout(loadFrame, 250);
+});
+$("f-seconds").addEventListener("change", limitSlider);
+$("f-number").addEventListener("input", updateFollow);
+$("tap").addEventListener("click", (e) => {
+  const box = $("f-frame").getBoundingClientRect();
+  const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  follow.x = x; follow.y = y;
+  Object.assign($("f-marker").style, { left: `${100 * x}%`, top: `${100 * y}%` });
+  $("f-marker").hidden = false;
+  updateFollow();
+});
+$("follow").querySelectorAll("[data-close]").forEach((b) =>
+  b.addEventListener("click", () => $("follow").close()));
+$("follow-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if ($("follow-start").disabled) return;
+  if (follow.fix) {
+    const { asset_id: asset } = follow.asset, { run, label } = follow.fix;
+    $("follow").close();
+    const job = await startJob("/api/fix", { asset_id: asset, run, t: follow.t, x: follow.x, y: follow.y },
+                               `Following ${label} again…`);
+    if (job) { await openAnalytics(asset, job.result.run); $("an-status").textContent = job.message; }
+    return;
+  }
+  post("/api/follow", {
+    asset_id: follow.asset.asset_id, number: $("f-number").value.trim(), name: $("f-name").value.trim(),
+    t: follow.t, x: follow.x, y: follow.y, seconds: followSeconds(), size: $("f-size").value,
+    height_cm: Number($("f-height").value) || null,
+  });
+  $("follow").close();
+});
+
+// ---------- analytics ----------
+const TYPES = {
+  goal: ["Goal", "#e5484d"], possible_goal: ["Possible goal", "#f76b15"],
+  ball_in_goal: ["Ball in the goal", "#e5484d"], shot: ["Shot", "#ab4aba"],
+  dribble: ["Dribble", "#0090ff"], pass_completed: ["Pass to a teammate", "#30a46c"],
+  pass_lost: ["Pass lost", "#e54d2e"], pass: ["Pass", "#8b8d98"],
+  pass_received: ["Pass received", "#46a758"], ball_won: ["Won the ball", "#12a594"],
+  ball_gained: ["Got the ball", "#12a594"], touch: ["On the ball", "#ffb224"],
+  cheer: ["Cheering", "#f76b15"], whistle: ["Whistle", "#8b8d98"],
+};
+const FILTERS = {
+  highlights: ["goal", "possible_goal", "shot", "dribble", "pass_completed", "pass_lost", "pass",
+               "pass_received", "ball_won", "ball_gained"],
+  ball: ["touch", "dribble", "pass_completed", "pass_lost", "pass", "pass_received", "ball_won",
+         "ball_gained", "shot"],
+  sound: ["cheer", "whistle", "goal", "possible_goal"],
+};
+let an = null, marking = null;
+
+async function openAnalytics(asset, run, scroll = true) {
+  const res = await fetch(`/api/analytics?asset=${encodeURIComponent(asset)}&run=${encodeURIComponent(run)}`,
+                          { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || `Error ${res.status}`); return; }
+  an = data;
+  const t = an.target;
+  $("an-title").textContent = `${t.name ? t.name + " " : ""}#${t.number}`;
+  const fixes = (an.taps || []).length - 1;
+  $("an-sub").textContent = `${an.filename} · ${duration(an.window.end_s - an.window.start_s)} analysed` +
+    (fixes > 0 ? ` · fixed ${fixes === 1 ? "once" : fixes + " times"}` : "");
+  $("an-status").textContent = "";
+  $("analytics").hidden = false;
+  renderAnalytics();
+  const still = $("an-still");
+  still.onload = drawHeat;
+  still.src = `/api/frame?asset=${encodeURIComponent(asset)}&t=${(an.window.start_s + an.window.end_s) / 2}`;
+  if (scroll) $("analytics").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("an-fix").addEventListener("click", openFix);
+$("an-close").addEventListener("click", () => { $("analytics").hidden = true; stopMarking(); });
+
+function renderAnalytics() {
+  const st = an.stats, ev = an.events;
+  const byPlayer = ev.filter((e) => e.type === "goal" && e.details.by_followed_player).length;
+  const card = (value, label, sub) =>
+    `<div class="stat"><span>${esc(label)}</span><b>${esc(value)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</div>`;
+  const offShare = st.distance_m ? Math.round(100 * st.distance_off_ball_m / st.distance_m) : 0;
+  $("an-cards").innerHTML = [
+    card(duration(st.on_ball_s), "On the ball", `${st.touches} touches`),
+    card(`${st.passes_completed}/${st.passes_made}`, "Passes completed", `${st.passes_received} received`),
+    card(st.dribbles, "Dribbles", ""),
+    card(st.shots, "Shots", byPlayer ? `${byPlayer} goal${byPlayer === 1 ? "" : "s"}` : ""),
+    card(`≈ ${Math.round(st.distance_m)} m`, "Distance", `${offShare}% off the ball`),
+    card(`≈ ${st.top_speed_kmh} km/h`, "Top speed", `${st.sprints} sprints`),
+    card(st.team_possession_share == null ? "—" : pct(st.team_possession_share), "Team had the ball", ""),
+    card(st.goals_in_game, "Goals in the game", st.possible_goals ? `+ ${st.possible_goals} possible` : ""),
+    card(pct(an.ball.seen_share), "Ball seen", "how often the ball was found"),
+  ].join("");
+  $("an-notes").innerHTML = an.notes.map((n) => `<div>${esc(n)}</div>`).join("");
+  renderTimeline();
+  renderEvents();
+  renderExports();
+}
+
+const EXPORTS = { playercam: ["Player cam", "player-cam"], highlights: ["Highlight reel", "highlights"] };
+function exportName(target, e) {
+  return `${target.name || "player"}-${target.number}-${EXPORTS[e.kind][1]}${e.vertical ? "-vertical" : ""}.mp4`;
+}
+function renderExports() {
+  const reel = an.reel;
+  $("an-reel-info").textContent = reel.moments
+    ? `Reel: ${reel.moments} moment${reel.moments === 1 ? "" : "s"}, ${duration(reel.seconds)}`
+    : "No moments for a reel yet: tick ✓ the ones you want.";
+  $("an-make-reel").disabled = !reel.moments;
+  $("an-export-list").innerHTML = an.exports.map((e) => {
+    const name = exportName(an.target, e), [label] = EXPORTS[e.kind];
+    return `<div class="row"><span class="grow"><strong>${label}</strong>
+      · ${e.vertical ? "vertical" : "landscape"} · ${duration(e.seconds)} · ${bytes(e.size_bytes)}
+      ${e.out_of_date ? `<span class="tag" title="Your ticks and crosses changed since it was made">out of date</span>` : ""}</span>
+      <button data-action="watch" data-url="${esc(e.url)}" data-title="${esc(label + " · " + $("an-title").textContent)}">Watch</button>
+      <a href="${esc(e.url)}?download=${encodeURIComponent(name)}" download="${esc(name)}">Download</a></div>`;
+  }).join("");
+}
+async function makeExport(kind, button) {
+  const { asset_id: asset, run } = an, [label] = EXPORTS[kind];
+  button.disabled = true;
+  const job = await startJob("/api/export", { asset_id: asset, run, kind, vertical: $("an-vertical").checked },
+                             `Making the ${label.toLowerCase()}…`);
+  button.disabled = false;
+  if (job && an && an.run === run) {
+    await openAnalytics(asset, run, false);
+    $("an-status").textContent = `${label} ready: watch or download it below.`;
+  }
+}
+$("an-make-cam").addEventListener("click", (e) => makeExport("playercam", e.currentTarget));
+$("an-make-reel").addEventListener("click", (e) => makeExport("highlights", e.currentTarget));
+
+function seekTo(t) {
+  if (!an.video_url) return;
+  const label = `${an.filename} · ${$("an-title").textContent}`;
+  watch(an.video_url, label, t - an.window.start_s - 2);
+}
+
+function renderTimeline() {
+  // Drawn at the timeline's real width so markers stay round on any screen.
+  const svg = $("an-timeline"), W = Math.max(200, Math.round(svg.clientWidth || 1000));
+  svg.setAttribute("viewBox", `0 0 ${W} 150`);
+  const start = an.window.start_s, span = Math.max(1, an.window.end_s - start);
+  const x = (t) => Math.max(0, Math.min(W, ((t - start) / span) * W));
+  const parts = [];
+  const loud = an.audio.loudness_rise_db || [];
+  if (loud.length) {
+    const step = an.audio.step_s, pts = loud.map((v, i) =>
+      `${x(start + i * step).toFixed(1)},${(36 - Math.max(0, Math.min(30, v)) / 30 * 32).toFixed(1)}`);
+    parts.push(`<path d="M0,36 L${pts.join(" L")} L${W},36 Z" fill="#f76b15" opacity="0.35"/>`);
+  }
+  parts.push(`<line x1="0" x2="${W}" y1="40" y2="40" stroke="currentColor" opacity="0.15"/>`);
+  for (const e of an.events) {
+    const [, colour] = TYPES[e.type] || ["", "#888"];
+    const tip = `<title>${esc((TYPES[e.type] || [e.type])[0])} · ${duration(e.t)}</title>`;
+    if (e.type === "touch") {
+      parts.push(`<rect data-t="${e.t}" x="${x(e.t)}" y="48" width="${Math.max(2, x(e.end_t) - x(e.t))}" height="14" fill="${colour}" rx="2">${tip}</rect>`);
+    } else if (e.type === "goal" || e.type === "possible_goal") {
+      const dash = e.type === "goal" ? "" : `stroke-dasharray="4 3"`;
+      parts.push(`<g data-t="${e.t}"><line x1="${x(e.t)}" x2="${x(e.t)}" y1="0" y2="150" stroke="${colour}" stroke-width="3" ${dash}/>
+        <rect x="${x(e.t) - 6}" y="112" width="12" height="12" fill="${colour}" transform="rotate(45 ${x(e.t)} 118)"/>${tip}</g>`);
+    } else if (e.type === "whistle") {
+      parts.push(`<rect data-t="${e.t}" x="${x(e.t) - 1}" y="132" width="3" height="16" fill="${colour}">${tip}</rect>`);
+    } else if (e.type !== "cheer" && e.type !== "ball_in_goal") {
+      const y = e.type === "dribble" ? 78 : e.type === "shot" ? 100 : 90;
+      parts.push(`<circle data-t="${e.t}" cx="${x(e.t)}" cy="${y}" r="5" fill="${colour}">${tip}</circle>`);
+    }
+  }
+  svg.innerHTML = parts.join("");
+  const shown = ["goal", "possible_goal", "shot", "dribble", "pass_completed", "pass_received", "pass_lost",
+                 "ball_won", "touch", "whistle"].filter((k) => an.events.some((e) => e.type === k));
+  $("an-legend").innerHTML = `<span><i style="background:#f76b15;opacity:.5"></i> crowd noise</span>` +
+    shown.map((k) => `<span><i style="background:${TYPES[k][1]}"></i> ${esc(TYPES[k][0])}</span>`).join("");
+}
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (an && !$("analytics").hidden) renderTimeline(); }, 150);
+});
+$("an-timeline").addEventListener("click", (e) => {
+  if (!an) return;
+  const hit = e.target.closest("[data-t]");
+  if (hit) return seekTo(Number(hit.dataset.t));
+  const box = $("an-timeline").getBoundingClientRect();
+  seekTo(an.window.start_s + ((e.clientX - box.left) / box.width) * (an.window.end_s - an.window.start_s));
+});
+
+function describe(e) {
+  const d = e.details || {};
+  if (d.evidence) return d.evidence.join(" + ") + (d.by_followed_player ? ` · by #${an.target.number}` : "");
+  const bits = [];
+  if (d.seconds) bits.push(`${d.seconds} s`);
+  if (d.distance_m) bits.push(`~${d.distance_m} m`);
+  if (d.loudness_db) bits.push(`+${d.loudness_db} dB`);
+  if (d.frequency_hz) bits.push(`${(d.frequency_hz / 1000).toFixed(1)} kHz`);
+  return bits.join(" · ");
+}
+
+function renderEvents() {
+  const filter = $("an-filter").value;
+  const keep = filter === "all" ? null : new Set(FILTERS[filter]);
+  const list = an.events.filter((e) => !keep || keep.has(e.type));
+  $("an-events").innerHTML = list.length ? list.map((e) => {
+    const [label, colour] = TYPES[e.type] || [e.type, "#888"];
+    const verdict = an.reviews[e.id];
+    return `<div class="ev">
+      <button class="t" data-seek="${e.t}" title="Watch">▶ ${duration(e.t)}</button>
+      <span class="dot" style="background:${colour}"></span>
+      <span class="grow small"><strong>${esc(label)}</strong> <span class="muted">${esc(describe(e))}</span></span>
+      <span class="conf" title="How sure the automatic guess is">${Math.round(e.confidence * 100)}%</span>
+      <button class="rv" data-ev="${esc(e.id)}" data-v="yes" aria-pressed="${verdict === "yes"}" title="Right">✓</button>
+      <button class="rv" data-ev="${esc(e.id)}" data-v="no" aria-pressed="${verdict === "no"}" title="Wrong">✗</button>
+    </div>`;
+  }).join("") : `<div class="small muted" style="padding:10px 0">Nothing of this kind was found.</div>`;
+  const summary = Object.values(an.review_summary || {});
+  const reviewed = summary.reduce((n, s) => n + s.reviewed, 0);
+  const right = summary.reduce((n, s) => n + s.confirmed, 0);
+  $("an-reviewed").textContent = reviewed
+    ? `You've checked ${reviewed} of ${an.events.length} moments: ${right} right, ${reviewed - right} wrong.`
+    : "Tick ✓ or ✗ to tell us whether each moment really happened.";
+  renderLearnt();
+}
+function renderLearnt() {
+  // What ticks across all games taught the highlight reel.
+  const types = Object.entries((an.learning || {}).types || {});
+  const learnt = types.filter(([, s]) => s.min_confidence != null);
+  $("an-learnt").textContent = learnt.length
+    ? "Learnt from your checks: " + learnt.map(([k, s]) => `${(TYPES[k] || [k])[0].toLowerCase()} right ` +
+        `${Math.round(100 * s.precision)}% → reel ${s.min_confidence > 1 ? "only when ticked"
+        : `takes them from ${Math.round(100 * s.min_confidence)}% sure`}`).join("; ") + "."
+    : types.length ? "Check 10 moments of a kind and the highlight reel learns how much to trust it." : "";
+}
+$("an-filter").addEventListener("change", renderEvents);
+$("an-events").addEventListener("click", async (e) => {
+  const seek = e.target.closest("[data-seek]");
+  if (seek) return seekTo(Number(seek.dataset.seek));
+  const button = e.target.closest(".rv");
+  if (!button) return;
+  const verdict = an.reviews[button.dataset.ev] === button.dataset.v ? null : button.dataset.v;
+  const res = await fetch("/api/review", { method: "POST", headers: { ...ACTION, "Content-Type": "application/json" },
+    body: JSON.stringify({ asset_id: an.asset_id, run: an.run, event: button.dataset.ev, verdict }) });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || `Error ${res.status}`); return; }
+  an.reviews = data.reviews;
+  an.review_summary = {};
+  for (const ev of an.events) {
+    const entry = (an.review_summary[ev.type] ||= { total: 0, reviewed: 0, confirmed: 0 });
+    entry.total++;
+    if (an.reviews[ev.id]) { entry.reviewed++; entry.confirmed += an.reviews[ev.id] === "yes"; }
+  }
+  renderEvents();
+  clearTimeout(reelTimer);
+  reelTimer = setTimeout(async () => {  // the reel's moments and "out of date" follow the ticks
+    const run = an.run, res = await fetch(`/api/analytics?asset=${encodeURIComponent(an.asset_id)}` +
+                                          `&run=${encodeURIComponent(run)}`, { cache: "no-store" });
+    if (!res.ok || !an || an.run !== run) return;
+    const fresh = await res.json();
+    an.reel = fresh.reel; an.exports = fresh.exports; an.learning = fresh.learning;
+    renderExports(); renderLearnt();
+  }, 400);
+});
+let reelTimer = null;
+
+// Heatmap over a still of the pitch, plus marking the goals.
+function drawHeat() {
+  const img = $("an-still"), canvas = $("an-heat");
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const heat = an.stats.heatmap, cw = W / heat.cols, ch = H / heat.rows;
+  heat.values.forEach((row, r) => row.forEach((v, c) => {
+    if (!v) return;
+    const cx = (c + 0.5) * cw, cy = (r + 0.5) * ch, radius = Math.max(cw, ch) * 1.3;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    g.addColorStop(0, `rgba(255, 60, 0, ${0.25 + 0.5 * v})`);
+    g.addColorStop(1, "rgba(255, 60, 0, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  }));
+  const goals = marking ? marking.goals : an.settings.goals;
+  ctx.lineWidth = Math.max(2, W / 300);
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = "#ffffff";
+  for (const [x1, y1, x2, y2] of goals) ctx.strokeRect(x1 * W, y1 * H, (x2 - x1) * W, (y2 - y1) * H);
+  ctx.setLineDash([]);
+}
+function stopMarking() {
+  marking = null;
+  $("an-heat-box").classList.remove("marking");
+  $("an-mark-help").hidden = true;
+  $("an-mark").hidden = false;
+  if (an) drawHeat();
+}
+$("an-mark").addEventListener("click", () => {
+  marking = { goals: an.settings.goals.map((g) => [...g]), start: null };
+  $("an-heat-box").classList.add("marking");
+  $("an-mark-help").hidden = false;
+  $("an-mark").hidden = true;
+});
+$("an-goals-cancel").addEventListener("click", stopMarking);
+$("an-goals-clear").addEventListener("click", () => { marking.goals = []; drawHeat(); });
+function canvasPoint(e) {
+  const box = $("an-heat").getBoundingClientRect();
+  return [Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)),
+          Math.min(1, Math.max(0, (e.clientY - box.top) / box.height))];
+}
+$("an-heat").addEventListener("pointerdown", (e) => {
+  if (!marking) return;
+  $("an-heat").setPointerCapture(e.pointerId);
+  marking.start = canvasPoint(e);
+  if (marking.goals.length >= 2) marking.goals.shift();
+  marking.goals.push([...marking.start, ...marking.start]);
+});
+$("an-heat").addEventListener("pointermove", (e) => {
+  if (!marking || !marking.start) return;
+  const [x, y] = canvasPoint(e), [sx, sy] = marking.start;
+  marking.goals[marking.goals.length - 1] = [Math.min(sx, x), Math.min(sy, y), Math.max(sx, x), Math.max(sy, y)];
+  drawHeat();
+});
+$("an-heat").addEventListener("pointerup", () => {
+  if (!marking || !marking.start) return;
+  marking.start = null;
+  const g = marking.goals[marking.goals.length - 1];
+  if (g[2] - g[0] < 0.01 || g[3] - g[1] < 0.01) marking.goals.pop();  // a click, not a box
+  drawHeat();
+});
+$("an-goals-save").addEventListener("click", () => {
+  const goals = marking.goals;
+  stopMarking();
+  reanalyse("/api/goals", { asset_id: an.asset_id, goals }, "Saving the goals and re-working the stats…");
+});
+$("an-reanalyse").addEventListener("click", () =>
+  reanalyse("/api/analyse", { asset_id: an.asset_id, run: an.run }, "Re-working the stats…"));
+async function reanalyse(url, body, message) {
+  const { asset_id: asset, run } = an;
+  if (await startJob(url, body, message)) return openAnalytics(asset, run);
+}
+// Start a job and wait for it, showing its progress in the analytics panel. Null if it failed.
+async function startJob(url, body, message) {
+  const res = await fetch(url, { method: "POST", headers: { ...ACTION, "Content-Type": "application/json" },
+                                 body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  const fail = (text) => { $("an-status").innerHTML = `<span class="error">${esc(text)}</span>`; return null; };
+  if (!res.ok) return fail(data.error || `Error ${res.status}`);
+  $("an-status").textContent = message;
+  refresh();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 700));
+    const job = (state.jobs || []).find((j) => j.id === data.job);
+    if (!job) continue;
+    if (job.status === "done") return job;
+    if (job.status === "failed" || job.status === "cancelled") return fail(job.error || job.status);
+    if (job.message) $("an-status").textContent = `${message} ${job.message}`;
+  }
+}
+
+// ---------- rendering ----------
+function renderJobs(jobs) {
+  if (!jobs.length) { $("jobs").innerHTML = ""; return; }
+  $("jobs").innerHTML = jobs.map((j) => {
+    const live = j.status === "running" || j.status === "queued";
+    const bar = j.status === "running"
+      ? (j.progress == null ? `<div class="bar indeterminate"><span></span></div>`
+                            : `<div class="bar"><span style="width:${100 * j.progress}%"></span></div>`)
+      : "";
+    return `<div class="card"><div class="row">
+        <span class="grow name">${esc(j.title)}</span>
+        <span class="pill ${esc(j.status)}">${esc(j.status)}</span>
+        ${live ? `<button data-action="cancel" data-job="${esc(j.id)}">Cancel</button>` : ""}
+      </div>
+      ${j.message ? `<div class="small muted">${esc(j.message)}</div>` : ""}
+      ${j.error ? `<div class="small error">${esc(j.error)}</div>` : ""}
+      ${bar}</div>`;
+  }).join("");
+}
+
+function sizeOptions(selected) {
+  return state.sizes.map((s) => `<option ${s === selected ? "selected" : ""}>${s}</option>`).join("");
+}
+function lengthOptions(selected) {
+  const opts = [[60, "First 1 min"], [300, "First 5 min"], [null, "Whole video"]];
+  return opts.map(([v, label]) =>
+    `<option value="${v ?? "all"}" ${v === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+const USES = [
+  ["testing", "measuring accuracy", "Labelled frames and your ticks from this video may be used to measure how well the software works"],
+  ["training", "training our AI", "Frames from this video may be used to teach our own models"],
+  ["public", "showing publicly", "This video may be shown outside the families, e.g. in the campaign video"],
+];
+function renderAssets(assets) {
+  if (!assets.length) {
+    $("assets").innerHTML = `<div class="card empty muted">No videos yet. Drop one above.</div>`;
+    return;
+  }
+  const busy = new Set((state.jobs || []).filter((j) => j.kind === "detect" &&
+    (j.status === "running" || j.status === "queued")).map((j) => j.asset_id));
+  $("assets").innerHTML = assets.map((a) => {
+    const c = choices[a.asset_id] || {};
+    const size = c.size || "small", seconds = c.seconds === undefined ? 60 : c.seconds;
+    const disabled = !state.detection_available || busy.has(a.asset_id);
+    const meta = [duration(a.duration_s), `${a.size[0]}×${a.size[1]}`, `${a.fps} fps`, a.codec,
+                  bytes(a.size_bytes), a.device].filter(Boolean).map(esc).join(" · ");
+    const warnings = (a.warnings || []).map((w) =>
+      `<div><span class="tag">${esc(w.split(":")[0])}</span> <span class="small muted">${esc(w)}</span></div>`).join("");
+    const runs = a.runs.map((r) => r.kind === "follow" ? `<div class="run row">
+        <span class="grow small">
+          <strong>Following ${esc(r.label)}</strong> · ${duration(r.seconds)} analysed
+          · found ${pct((r.seen || 0) + (r.filled || 0))} of the time
+          (${pct(r.seen)} seen, ${pct(r.filled)} filled in)
+          · ${esc(r.links)} reconnection${r.links === 1 ? "" : "s"}
+          ${r.uncertain_links ? `<span class="tag">${esc(r.uncertain_links)} uncertain</span>` : ""}
+          ${r.corrections ? `<span class="tag">fixed ×${esc(r.corrections)}</span>` : ""}
+          ${r.stats ? `<br>${esc(r.stats.touches)} touches · ${duration(r.stats.on_ball_s)} on the ball
+            · ${esc(r.stats.passes_completed)}/${esc(r.stats.passes_made)} passes · ${esc(r.stats.dribbles)} dribbles
+            · ${esc(r.stats.shots)} shots${r.stats.goals ? ` · <strong>${esc(r.stats.goals)} goal${r.stats.goals === 1 ? "" : "s"}</strong>` : ""}` : ""}
+          <span class="muted">· ${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</span>
+        </span>
+        <button class="primary" data-action="analytics" data-asset="${esc(a.asset_id)}" data-run="${esc(r.name)}">Analytics</button>
+        ${r.video_url ? `<button data-action="watch" data-url="${esc(r.video_url)}"
+            data-title="${esc(a.filename + " · " + r.label)}">Watch</button>` : ""}
+        <a class="small" href="${esc(r.metrics_url)}" target="_blank">numbers</a>
+        ${(r.exports || []).map((e) => `<button data-action="watch" data-url="${esc(e.url)}"
+            data-title="${esc(a.filename + " · " + r.label + " · " + EXPORTS[e.kind][0])}">▶ ${esc(EXPORTS[e.kind][0])}${e.vertical ? " (vertical)" : ""}</button>`).join("")}
+      </div>` : `<div class="run row">
+        <span class="grow small">
+          <strong>${esc(r.detector)}</strong> on ${esc(r.device)} · ${duration(r.seconds)} analysed
+          · ${esc(r.realtime_factor)}× real time · ${esc(r.players_per_frame)} players per frame
+          · ball seen ${pct(r.ball_seen)}${r.player_height_p50 ? ` · players ~${Math.round(r.player_height_p50)} px tall` : ""}
+          <span class="muted">· ${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</span>
+        </span>
+        ${r.video_url ? `<button data-action="watch" data-url="${esc(r.video_url)}"
+            data-title="${esc(a.filename + " · " + r.detector)}">Watch</button>` : ""}
+        <a class="small" href="${esc(r.metrics_url)}" target="_blank">numbers</a>
+      </div>`).join("");
+    return `<div class="card">
+      <div class="row">
+        <span class="grow"><span class="name">${esc(a.filename)}</span><br>
+          <span class="small muted">${meta}</span></span>
+        <button data-action="watch" data-url="${esc(a.source_url)}" data-title="${esc(a.filename)}">Play original</button>
+      </div>
+      ${warnings ? `<div class="stack small" style="margin-top:8px">${warnings}</div>` : ""}
+      <div class="row small consent" style="margin-top:8px">
+        <span class="muted" title="Every family whose child can be seen must agree">Families agreed to:</span>
+        ${USES.map(([use, label, tip]) => `<label title="${esc(tip)}"><input type="checkbox" data-consent="${use}"
+          data-asset="${esc(a.asset_id)}" ${a.consent && a.consent[use] ? "checked" : ""}> ${esc(label)}</label>`).join("")}
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" data-action="follow" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
+          ${busy.has(a.asset_id) ? "Working…" : "Follow a player"}</button>
+        <span class="small muted">or</span>
+        <select data-choice="seconds" data-asset="${esc(a.asset_id)}" aria-label="How much to analyse">${lengthOptions(seconds)}</select>
+        <select data-choice="size" data-asset="${esc(a.asset_id)}" aria-label="Model size">${sizeOptions(size)}</select>
+        <button data-action="detect" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
+          Detect all players</button>
+        ${state.detection_available ? "" : `<span class="small muted">Detection isn't installed:
+          run <code>uv sync --extra detect</code>, then restart this page's server.</span>`}
+      </div>
+      ${runs ? `<div class="runs">${runs}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+let refreshing = false;
+async function refresh() {
+  // One request at a time, so a slow answer can't land after a newer one.
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    const res = await fetch("/api/state", { cache: "no-store" });
+    state = await res.json();
+    $("footer").textContent = `Library: ${state.library}`;
+    // Only remember what was drawn once drawing worked, so an error is retried.
+    const jobs = JSON.stringify(state.jobs);
+    if (jobs !== lastJobs) { renderJobs(state.jobs); lastJobs = jobs; }
+    const assetKey = JSON.stringify(state.assets) + JSON.stringify(
+      state.jobs.filter((j) => j.kind === "detect").map((j) => [j.asset_id, j.status]));
+    if (assetKey !== lastAssets) { renderAssets(state.assets); lastAssets = assetKey; }
+  } catch (error) {
+    $("footer").textContent = error instanceof TypeError
+      ? "Can't reach the server. Is `soccer-recorder serve` still running?"
+      : `Display error: ${error.message}`;
+  } finally {
+    refreshing = false;
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
