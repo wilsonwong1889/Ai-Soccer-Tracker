@@ -5,18 +5,16 @@ Audit of the existing setup against the *AI Soccer Recorder* product brief
 
 ## What exists
 
-- **This repository (`BuildADisaster`) is a Roblox game**: about 100 Luau
-  modules synced with Rojo (`default.project.json`), Luau specs in `tests/`,
-  and Python scripts in `scripts/` that model the game's economy. None of it
-  is related to video, soccer or ML. The soccer project shares nothing with it
-  except the git history.
+- **The repository this started in (`BuildADisaster`) is a Roblox game**:
+  about 100 Luau modules synced with Rojo, Luau specs and Python economy
+  scripts. None of it is related to video, soccer or ML. The project has
+  since moved to its own repository, `Ai-Soccer-Tracker` (decisions.md T9).
 - **None of the account's other repositories is related** either (websites,
   booking apps, other games).
 - **No soccer recorder code, environment, footage, labels, benchmarks or
   documentation** existed anywhere before this release.
 
-So the starting point is greenfield. The Roblox game is untouched: everything
-for the recorder lives in `soccer-recorder/`, which Rojo doesn't sync.
+So the starting point was greenfield, and the Roblox game was left untouched.
 
 ## Brief vs. current state
 
@@ -38,16 +36,12 @@ for the recorder lives in `soccer-recorder/`, which Rojo doesn't sync.
 | Kickstarter (§3, §6) | Pledge import, redemption tokens, Founder IDs | Missing; reward economics are unvalidated (see risks) |
 | Privacy (§6) | Deletion, parental consent, minors' privacy, access control | Only repo hygiene so far (footage can't be committed) |
 | Evaluation set (§7) | Identity-consistent labeled sequences | Missing; needs footage plus annotation (CVAT) |
-| CI | Not in brief | None; tests run locally. Add once the project has its own repo |
+| CI | Not in brief | None yet; tests run locally. Can be added now that the project has its own repo (GitHub Actions minutes on a private repo are limited on free plans: ask first) |
 
 ## Gaps that need a decision from you
 
-1. **Where the project lives.** It's in `soccer-recorder/` on the
-   `claude/new-session-v5484d` branch of the game's repository, because this
-   session only had that repo. It should get its own repository before R2.
-   Moving the folder keeps everything working (`git subtree split
-   --prefix=soccer-recorder` keeps its history). Creating that repo is your
-   call: the brief asks to check before publishing anything.
+1. ~~**Where the project lives.**~~ **Resolved 2026-10-25:** its own private
+   repository, `Ai-Soccer-Tracker`, with the history kept (decisions.md T9).
 2. **Real footage.** R2 can't be evaluated on synthetic clips. Needed: 5–10
    minutes of stationary, landscape iPhone footage of a youth 6v6 game, with
    permission from every family whose child is identifiable. Ideally record
