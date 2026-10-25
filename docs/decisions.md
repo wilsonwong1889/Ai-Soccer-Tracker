@@ -56,6 +56,7 @@ Not to be published before benchmarking and worst-case fulfilment modelling
 | T11 | **Decided 2026-10-25, follows from T10: no SoccerNet or SportsMOT data, and no checkpoints trained on them** | Research-only / non-commercial terms. Our own footage plus SoccerTrack v2 (CC BY 4.0) instead | Written permission from the dataset owners |
 | T12 | **Detection is an optional install** (`uv sync --extra detect`). Defaults: RF-DETR small, score ≥ 0.3, frames downscaled to a 1280 px long side, `--device auto` (Apple GPU, then CUDA, then CPU) | Keeps the core light and its tests torch-free. Small is the middle option until benchmarks say otherwise | R2 benchmarks and `evaluate` results on the M4 |
 | T13 | **Every installed package's license is checked by a test** (`tests/test_licenses.py`); models and data go in [register.md](register.md) by hand | Makes T10 hold automatically as dependencies change | — |
+| T14 | **The local website (`serve`) uses only Python's standard library** and listens on 127.0.0.1. It refuses other hosts, and changes need a custom header | A one-person tool on the Mac, with no new dependencies to install or license-check. The Host check and the header stop other websites in the same browser from reaching children's footage | R8 builds the real upload/processing API (FastAPI per the brief) |
 
 ## Open questions
 

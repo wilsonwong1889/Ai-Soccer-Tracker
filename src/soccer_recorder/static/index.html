@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soccer Recorder</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #17202a; --muted: #5d6b7a; --line: #dfe3e8;
+    --accent: #1f7a4d; --accent-soft: #e3f2ea; --warn: #9a5b00; --warn-soft: #fff3df;
+    --bad: #b42318; --bad-soft: #fde7e5; --bar: #e8ebef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --card: #1a2027; --text: #e7ecf1; --muted: #9aa7b4; --line: #2c343d;
+      --accent: #4cc38a; --accent-soft: #173326; --warn: #f0b45a; --warn-soft: #33270f;
+      --bad: #ff7b72; --bad-soft: #3a1714; --bar: #262e37;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .stack > * + * { margin-top: 10px; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 34px 16px; text-align: center;
+          cursor: pointer; background: var(--card); transition: border-color .15s, background .15s; }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { font-size: 17px; display: block; margin-bottom: 4px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+  .name { font-weight: 600; overflow-wrap: anywhere; }
+  .bar { height: 8px; background: var(--bar); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .bar.indeterminate > span { width: 35%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { from { margin-left: -35%; } to { margin-left: 100%; } }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bar); white-space: nowrap; }
+  .pill.running, .pill.queued { background: var(--accent-soft); color: var(--accent); }
+  .pill.done { background: var(--accent-soft); color: var(--accent); }
+  .pill.failed { background: var(--bad-soft); color: var(--bad); }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }
+  .error { color: var(--bad); }
+  button, select { font: inherit; border-radius: 7px; border: 1px solid var(--line); background: var(--card);
+                   color: var(--text); padding: 5px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .runs { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
+  .run { padding: 6px 0; }
+  #player { margin-top: 16px; }
+  #player video { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; display: block; }
+  .empty { padding: 18px; text-align: center; }
+  a { color: var(--accent); }
+  code { font-size: 13px; background: var(--bar); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Soccer Recorder</h1>
+    <span class="muted small">Runs only on this computer. Videos never leave it.</span>
+  </header>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Add videos">
+    <strong>Drop game videos here</strong>
+    <span class="muted">or click to choose files (.mov, .mp4)</span>
+    <input id="picker" type="file" accept="video/*,.mov,.mp4,.m4v" multiple hidden>
+  </div>
+  <div id="notice" class="small muted" style="margin-top:8px"></div>
+
+  <section id="player" class="card stack" hidden>
+    <div class="row"><span id="player-title" class="grow name"></span>
+      <button id="player-close">Close</button></div>
+    <video id="video" controls playsinline></video>
+  </section>
+
+  <h2>Activity</h2>
+  <div id="uploads" class="stack"></div>
+  <div id="jobs" class="stack"></div>
+
+  <h2>Videos</h2>
+  <div id="assets" class="stack"><div class="card empty muted">Loading…</div></div>
+
+  <p class="small muted" id="footer"></p>
+</main>
+
+<script>
+const ACTION = { "X-Soccer-Recorder": "1" };
+const VIDEO_EXT = /\.(mov|mp4|m4v|mkv|avi)$/i;
+const choices = {};  // asset id -> {size, seconds}, kept across refreshes
+let lastAssets = "", lastJobs = "", state = null, activeUploads = 0;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function duration(seconds) {
+  if (seconds == null) return "?";
+  const s = Math.round(seconds), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+function bytes(n) {
+  if (n == null) return "";
+  const units = ["B", "KB", "MB", "GB"]; let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+const pct = (x) => x == null ? "?" : `${Math.round(x * 100)}%`;
+
+// ---------- uploads ----------
+const queue = [];
+function addFiles(files) {
+  const skipped = [];
+  for (const file of files) {
+    if (file.type.startsWith("video/") || VIDEO_EXT.test(file.name)) queue.push(file);
+    else skipped.push(file.name);
+  }
+  $("notice").textContent = skipped.length ? `Skipped (not a video): ${skipped.join(", ")}` : "";
+  pump();
+}
+function pump() {
+  if (activeUploads || !queue.length) return;
+  upload(queue.shift());
+}
+function upload(file) {
+  activeUploads++;
+  const row = document.createElement("div");
+  row.className = "card";
+  row.innerHTML = `<div class="row"><span class="grow name">${esc(file.name)}</span>
+    <span class="pill running">Uploading</span></div>
+    <div class="small muted" data-msg>${bytes(file.size)}</div><div class="bar"><span></span></div>`;
+  $("uploads").prepend(row);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}`);
+  for (const [k, v] of Object.entries(ACTION)) xhr.setRequestHeader(k, v);
+  xhr.setRequestHeader("Content-Type", "application/octet-stream");
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    row.querySelector(".bar span").style.width = `${(100 * e.loaded) / e.total}%`;
+    row.querySelector("[data-msg]").textContent = `${bytes(e.loaded)} of ${bytes(e.total)}`;
+  };
+  const finish = (ok, message) => {
+    activeUploads--;
+    if (ok) row.remove();
+    else {
+      row.querySelector(".pill").className = "pill failed";
+      row.querySelector(".pill").textContent = "Upload failed";
+      row.querySelector("[data-msg]").innerHTML = `<span class="error">${esc(message)}</span>`;
+    }
+    refresh(); pump();
+  };
+  xhr.onload = () => xhr.status < 300 ? finish(true)
+    : finish(false, (JSON.parse(xhr.responseText || "{}").error) || `Error ${xhr.status}`);
+  xhr.onerror = () => finish(false, "The server didn't respond. Is it still running?");
+  xhr.send(file);
+}
+const drop = $("drop");
+drop.addEventListener("click", () => $("picker").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") $("picker").click(); });
+$("picker").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => {
+  e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => {
+  e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+// Dropping a file anywhere else shouldn't navigate away from the page.
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+window.addEventListener("beforeunload", (e) => {
+  if (activeUploads || queue.length) { e.preventDefault(); e.returnValue = ""; }
+});
+
+// ---------- actions ----------
+async function post(url, body) {
+  const res = await fetch(url, { method: "POST",
+    headers: { ...ACTION, "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (!res.ok) alert((await res.json().catch(() => ({}))).error || `Error ${res.status}`);
+  refresh();
+}
+function watch(url, title) {
+  $("player").hidden = false;
+  $("player-title").textContent = title;
+  $("video").src = url;
+  $("video").play().catch(() => {});
+  $("player").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("player-close").addEventListener("click", () => {
+  $("video").pause(); $("video").removeAttribute("src"); $("video").load(); $("player").hidden = true;
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-action]");
+  if (!b) return;
+  const { action, asset, url, title, job } = b.dataset;
+  if (action === "detect") {
+    const c = choices[asset] || {};
+    post("/api/detect", { asset_id: asset, size: c.size || "small", seconds: c.seconds ?? 60 });
+  } else if (action === "watch") watch(url, title);
+  else if (action === "cancel") post(`/api/jobs/${job}/cancel`);
+});
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-choice]");
+  if (!el) return;
+  const c = (choices[el.dataset.asset] ||= {});
+  c[el.dataset.choice] = el.dataset.choice === "seconds"
+    ? (el.value === "all" ? null : Number(el.value)) : el.value;
+});
+
+// ---------- rendering ----------
+function renderJobs(jobs) {
+  if (!jobs.length) { $("jobs").innerHTML = ""; return; }
+  $("jobs").innerHTML = jobs.map((j) => {
+    const live = j.status === "running" || j.status === "queued";
+    const bar = j.status === "running"
+      ? (j.progress == null ? `<div class="bar indeterminate"><span></span></div>`
+                            : `<div class="bar"><span style="width:${100 * j.progress}%"></span></div>`)
+      : "";
+    return `<div class="card"><div class="row">
+        <span class="grow name">${esc(j.title)}</span>
+        <span class="pill ${esc(j.status)}">${esc(j.status)}</span>
+        ${live ? `<button data-action="cancel" data-job="${esc(j.id)}">Cancel</button>` : ""}
+      </div>
+      ${j.message ? `<div class="small muted">${esc(j.message)}</div>` : ""}
+      ${j.error ? `<div class="small error">${esc(j.error)}</div>` : ""}
+      ${bar}</div>`;
+  }).join("");
+}
+
+function sizeOptions(selected) {
+  return state.sizes.map((s) => `<option ${s === selected ? "selected" : ""}>${s}</option>`).join("");
+}
+function lengthOptions(selected) {
+  const opts = [[60, "First 1 min"], [300, "First 5 min"], [null, "Whole video"]];
+  return opts.map(([v, label]) =>
+    `<option value="${v ?? "all"}" ${v === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function renderAssets(assets) {
+  if (!assets.length) {
+    $("assets").innerHTML = `<div class="card empty muted">No videos yet. Drop one above.</div>`;
+    return;
+  }
+  const busy = new Set((state.jobs || []).filter((j) => j.kind === "detect" &&
+    (j.status === "running" || j.status === "queued")).map((j) => j.asset_id));
+  $("assets").innerHTML = assets.map((a) => {
+    const c = choices[a.asset_id] || {};
+    const size = c.size || "small", seconds = c.seconds === undefined ? 60 : c.seconds;
+    const disabled = !state.detection_available || busy.has(a.asset_id);
+    const meta = [duration(a.duration_s), `${a.size[0]}×${a.size[1]}`, `${a.fps} fps`, a.codec,
+                  bytes(a.size_bytes), a.device].filter(Boolean).map(esc).join(" · ");
+    const warnings = (a.warnings || []).map((w) =>
+      `<div><span class="tag">${esc(w.split(":")[0])}</span> <span class="small muted">${esc(w)}</span></div>`).join("");
+    const runs = a.runs.map((r) => `<div class="run row">
+        <span class="grow small">
+          <strong>${esc(r.detector)}</strong> on ${esc(r.device)} · ${duration(r.seconds)} analysed
+          · ${esc(r.realtime_factor)}× real time · ${esc(r.players_per_frame)} players per frame
+          · ball seen ${pct(r.ball_seen)}${r.player_height_p50 ? ` · players ~${Math.round(r.player_height_p50)} px tall` : ""}
+          <span class="muted">· ${esc((r.created_at || "").replace("T", " ").slice(0, 16))}</span>
+        </span>
+        ${r.video_url ? `<button data-action="watch" data-url="${esc(r.video_url)}"
+            data-title="${esc(a.filename + " · " + r.detector)}">Watch</button>` : ""}
+        <a class="small" href="${esc(r.metrics_url)}" target="_blank">numbers</a>
+      </div>`).join("");
+    return `<div class="card">
+      <div class="row">
+        <span class="grow"><span class="name">${esc(a.filename)}</span><br>
+          <span class="small muted">${meta}</span></span>
+        <button data-action="watch" data-url="${esc(a.source_url)}" data-title="${esc(a.filename)}">Play original</button>
+      </div>
+      ${warnings ? `<div class="stack small" style="margin-top:8px">${warnings}</div>` : ""}
+      <div class="row" style="margin-top:10px">
+        <select data-choice="seconds" data-asset="${esc(a.asset_id)}" aria-label="How much to analyse">${lengthOptions(seconds)}</select>
+        <select data-choice="size" data-asset="${esc(a.asset_id)}" aria-label="Model size">${sizeOptions(size)}</select>
+        <button class="primary" data-action="detect" data-asset="${esc(a.asset_id)}" ${disabled ? "disabled" : ""}>
+          ${busy.has(a.asset_id) ? "Detecting…" : "Detect players"}</button>
+        ${state.detection_available ? "" : `<span class="small muted">Detection isn't installed:
+          run <code>uv sync --extra detect</code>, then restart this page's server.</span>`}
+      </div>
+      ${runs ? `<div class="runs">${runs}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+let refreshing = false;
+async function refresh() {
+  // One request at a time, so a slow answer can't land after a newer one.
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    const res = await fetch("/api/state", { cache: "no-store" });
+    state = await res.json();
+    $("footer").textContent = `Library: ${state.library}`;
+    // Only remember what was drawn once drawing worked, so an error is retried.
+    const jobs = JSON.stringify(state.jobs);
+    if (jobs !== lastJobs) { renderJobs(state.jobs); lastJobs = jobs; }
+    const assetKey = JSON.stringify(state.assets) + JSON.stringify(
+      state.jobs.filter((j) => j.kind === "detect").map((j) => [j.asset_id, j.status]));
+    if (assetKey !== lastAssets) { renderAssets(state.assets); lastAssets = assetKey; }
+  } catch (error) {
+    $("footer").textContent = error instanceof TypeError
+      ? "Can't reach the server. Is `soccer-recorder serve` still running?"
+      : `Display error: ${error.message}`;
+  } finally {
+    refreshing = false;
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

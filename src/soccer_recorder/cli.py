@@ -1,5 +1,5 @@
 """Command line: soccer-recorder doctor | probe | ingest | list | make-sample |
-detect | benchmark | sample-frames | evaluate."""
+detect | benchmark | sample-frames | evaluate | serve."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -397,6 +398,32 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .server import App, make_server
+
+    library = args.library or default_library()
+    app = App(library, detector_factory=lambda size: make_detector(size))
+    try:
+        server = make_server(app, args.port)
+    except OSError as error:
+        raise ValueError(f"can't use port {args.port} ({error.strerror}); "
+                         f"try --port {args.port + 1}") from error
+    url = f"http://127.0.0.1:{server.server_port}/"
+    print(f"Soccer Recorder is running at {url}")
+    print(f"Library: {library.resolve()}")
+    print("Only this computer can open it. Press Ctrl+C to stop.")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping (cancelling any running jobs)…")
+    finally:
+        server.server_close()
+        app.jobs.shutdown()
+    return 0
+
+
 def _add_detector_args(parser: argparse.ArgumentParser, *, sizes: bool = False) -> None:
     if not sizes:
         parser.add_argument("--size", choices=list(SIZES), default=DEFAULT_SIZE,
@@ -522,6 +549,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="lowest score kept, for AP50 (default 0.05)")
     evaluate.add_argument("--out", type=Path, help="report JSON (default next to the labels)")
     evaluate.set_defaults(func=cmd_evaluate)
+
+    serve = sub.add_parser("serve", help="open the local website: drop videos, run detection")
+    serve.add_argument("--port", type=int, default=8765, help="default 8765")
+    serve.add_argument("--library", type=Path, help=library_help)
+    serve.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
+    serve.set_defaults(func=cmd_serve)
     return parser
 
 

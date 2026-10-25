@@ -184,8 +184,10 @@ def ingest(
     library: Path | None = None,
     *,
     link: bool = False,
+    move: bool = False,
     proxy: bool = False,
     proxy_max_side: int = DEFAULT_MAX_SIDE,
+    original_filename: str | None = None,
 ) -> tuple[Asset, bool]:
     """Add a video to the library. Returns (asset, created).
 
@@ -193,7 +195,14 @@ def ingest(
     the library returns the existing asset with created=False (adding the
     proxy if it was asked for and is missing). The asset folder appears only
     once complete, so an interrupted ingest leaves nothing half-written.
+
+    `link` symlinks the original instead of copying it. `move` moves it into
+    the library (instant on the same disk, used for uploads); if the ingest
+    fails or the file turns out to be a duplicate, it is left where it was.
+    `original_filename` overrides the name recorded in the manifest.
     """
+    if link and move:
+        raise ValueError("link and move can't both be used")
     path = Path(path)
     library = library or default_library()
     try:
@@ -215,20 +224,27 @@ def ingest(
     library.mkdir(parents=True, exist_ok=True)
     staging = library / f".ingest-{asset_id}-{uuid.uuid4().hex[:8]}"
     staging.mkdir()
+    source = "source" + path.suffix.lower()
+
+    def put_back() -> None:
+        if move and (staging / source).exists() and not path.exists():
+            shutil.move(staging / source, path)
+
     try:
-        source = "source" + path.suffix.lower()
         if link:
             (staging / source).symlink_to(path.resolve())
+        elif move:
+            shutil.move(path, staging / source)
         else:
             shutil.copy2(path, staging / source)
         asset = Asset(
             directory=staging,
             asset_id=asset_id,
             sha256=digest,
-            original_filename=path.name,
+            original_filename=original_filename or path.name,
             ingested_at=datetime.now(UTC).isoformat(timespec="seconds"),
             source=source,
-            source_mode="symlink" if link else "copy",
+            source_mode="symlink" if link else "move" if move else "copy",
             video=info,
         )
         _write_manifest(asset)
@@ -239,10 +255,12 @@ def ingest(
         except OSError:
             # Another ingest of the same file finished first: keep theirs.
             if (final / MANIFEST).is_file():
+                put_back()
                 shutil.rmtree(staging, ignore_errors=True)
                 return load_asset(final), False
             raise
     except BaseException:
+        put_back()
         shutil.rmtree(staging, ignore_errors=True)
         raise
     asset.directory = final

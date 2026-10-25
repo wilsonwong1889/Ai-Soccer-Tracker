@@ -21,6 +21,9 @@ what each release delivers and how it's checked.
 | [docs/labeling.md](docs/labeling.md) | Labelling frames in CVAT and scoring detection (R2) |
 | [docs/register.md](docs/register.md) | Every model, dataset and notable package, with its license |
 
+Quickest start: `uv run soccer-recorder serve` opens a local website where
+you drop videos in and run detection (see [the local website](#the-local-website)).
+
 ## Setup (macOS, Apple Silicon)
 
 You need [Homebrew](https://brew.sh). Then, from this folder:
@@ -38,6 +41,31 @@ folder, and exits non-zero if anything required is missing. It ends with
 Without uv: `python3.12 -m venv .venv && source .venv/bin/activate && pip install -e . pytest`
 (unpinned, so not exactly reproducible). Linux works the same with FFmpeg from
 your package manager.
+
+## The local website
+
+The easiest way to use it:
+
+```sh
+uv sync --extra detect          # once (skip --extra detect to only add and play videos)
+uv run soccer-recorder serve    # opens http://127.0.0.1:8765 in your browser
+```
+
+- **Drop game videos onto the page** (or click to choose). Each one uploads
+  and is checked and added to the library. Dropping the same video twice
+  doesn't add it twice.
+- **Detect players** on any video: the first 1 or 5 minutes, or the whole
+  game, with the model size you pick. Progress and time left show under
+  *Activity*, and you can cancel.
+- **Watch** the result with boxes drawn, or play the original. *numbers*
+  opens the run's metrics.
+
+It's a tool for you on your Mac, not the product's upload service (that's
+R8). It only answers on this computer: it listens on 127.0.0.1 and ignores
+requests from other websites. Uploaded files are moved into the library,
+not copied, so a big game doesn't take double the disk. Press Ctrl+C in the
+terminal to stop it; running jobs are cancelled. `--port` changes the port
+and `--library` the folder.
 
 ## Usage
 

@@ -13,6 +13,7 @@ from soccer_recorder.library import (
     load_asset,
 )
 from soccer_recorder.media import probe
+from soccer_recorder.sample import make_sample
 
 pytestmark = needs_ffmpeg
 
@@ -125,3 +126,41 @@ def test_default_library_honours_environment(monkeypatch, tmp_path):
     assert default_library() == tmp_path
     monkeypatch.delenv("SOCCER_RECORDER_LIBRARY")
     assert str(default_library()) == "data/library"
+
+
+def test_ingest_move_mode_moves_the_file_in(tmp_path, landscape_clip):
+    upload = tmp_path / "upload-123.mp4"
+    upload.write_bytes(landscape_clip.read_bytes())
+    asset, created = ingest(upload, tmp_path / "lib", move=True, original_filename="Game 1.mp4")
+    assert created
+    assert not upload.exists()
+    assert asset.source_mode == "move"
+    assert asset.original_filename == "Game 1.mp4"
+    assert asset.source_path.read_bytes() == landscape_clip.read_bytes()
+
+
+def test_ingest_move_mode_leaves_duplicates_and_failures_in_place(
+    tmp_path, landscape_clip, monkeypatch
+):
+    library = tmp_path / "lib"
+    ingest(landscape_clip, library)
+    upload = tmp_path / "again.mp4"
+    upload.write_bytes(landscape_clip.read_bytes())
+    _, created = ingest(upload, library, move=True)
+    assert not created and upload.exists()  # duplicate: untouched
+
+    def broken_proxy(asset, max_side):
+        raise IngestError("encoder crashed")
+
+    monkeypatch.setattr(library_module, "make_proxy", broken_proxy)
+    other = tmp_path / "other.mp4"
+    make_sample(other, duration=1, width=160, height=90, fps=10, codec="h264")
+    with pytest.raises(IngestError):
+        ingest(other, library, move=True, proxy=True)
+    assert other.exists()  # put back after the failure
+    assert sorted(p.name for p in library.iterdir() if p.name.startswith(".")) == []
+
+
+def test_link_and_move_together_are_refused(tmp_path, landscape_clip):
+    with pytest.raises(ValueError):
+        ingest(landscape_clip, tmp_path, link=True, move=True)
